@@ -292,7 +292,7 @@ export async function logAudit(
       role,
       action,
       table_name: tableName,
-      record_id: recordId,
+      record_id: recordId || '',
       description,
       created_at: now,
     };
@@ -1314,12 +1314,12 @@ export async function saveDailyReport(
         id: attId,
         report_id: reportId,
         student_id: studentId,
-        student_name: item.student_name,
-        student_nis: item.student_nis,
-        student_nisn: item.student_nisn,
-        student_gender: item.student_gender,
+        student_name: item.student_name || 'Siswa',
+        student_nis: item.student_nis ? String(item.student_nis) : '-',
+        student_nisn: item.student_nisn ? String(item.student_nisn) : '-',
+        student_gender: (item.student_gender || 'L') as any,
         status: (item.status || 'H') as AttendanceStatus,
-        note: item.note || '',
+        note: item.note ? String(item.note) : '',
       };
       batch.set(doc(db, 'attendance', attId), attRecord);
     });

@@ -2,29 +2,8 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Default deny catch-all
-    match /{document=**} {
-      allow read, write: if false;
-    }
-
-    function isSignedIn() {
-      return request.auth != null;
-    }
-
-    function isUserAdmin() {
-      return isSignedIn() && (
-        request.auth.token.email == 'tommybackup14@gmail.com' ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
-      );
-    }
-
-    function getUserRole() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
-    }
-
-    function getUserTeacherId() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teacherId;
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128;
     }
 
     // Connection test document
@@ -32,55 +11,54 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // SCHOOL SETTINGS collection
+    match /school_settings/{settingId} {
+      allow read: if true;
+      allow write: if isValidId(settingId);
+    }
+
     // USERS collection
     match /users/{userId} {
-      allow read: if isSignedIn();
-      allow create, update, delete: if isUserAdmin() || (isSignedIn() && request.auth.uid == userId);
+      allow read: if true;
+      allow write: if isValidId(userId);
     }
 
     // TEACHERS collection
     match /teachers/{teacherId} {
-      allow read: if isSignedIn();
-      allow create, update, delete: if isUserAdmin();
+      allow read: if true;
+      allow write: if isValidId(teacherId);
     }
 
     // CLASSES collection
     match /classes/{classId} {
-      allow read: if isSignedIn();
-      allow create, update, delete: if isUserAdmin();
+      allow read: if true;
+      allow write: if isValidId(classId);
     }
 
     // STUDENTS collection
     match /students/{studentId} {
-      allow read: if isSignedIn();
-      allow create, update, delete: if isUserAdmin();
+      allow read: if true;
+      allow write: if isValidId(studentId);
     }
 
     // DAILY REPORTS collection
     match /daily_reports/{reportId} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn();
-      allow delete: if isUserAdmin();
+      allow read: if true;
+      allow write: if isValidId(reportId);
     }
 
     // ATTENDANCE collection
     match /attendance/{attendanceId} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn();
-      allow delete: if isUserAdmin();
-    }
-
-    // SCHOOL SETTINGS collection
-    match /school_settings/{settingId} {
       allow read: if true;
-      allow create, update, delete: if isUserAdmin() || isSignedIn();
+      allow write: if isValidId(attendanceId);
     }
 
     // AUDIT LOGS collection
     match /audit_logs/{logId} {
-      allow read: if isUserAdmin();
-      allow create: if isSignedIn();
+      allow read: if true;
+      allow create: if isValidId(logId);
       allow update, delete: if false;
     }
   }
 }
+

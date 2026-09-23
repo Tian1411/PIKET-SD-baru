@@ -14,6 +14,12 @@ import * as firestoreService from './firestoreService';
 
 let inMemoryToken: string | null = null;
 let inMemoryCurrentUser: User | null = null;
+let inMemoryAuthData: {
+  token: string;
+  user: User;
+  teacher?: Teacher;
+  assigned_class?: SchoolClass;
+} | null = null;
 
 export function setApiToken(token: string | null) {
   inMemoryToken = token;
@@ -53,14 +59,39 @@ export function getApiToken(): string | null {
 }
 
 export function getCurrentStoredUser(): User | null {
+  if (inMemoryAuthData?.user) return inMemoryAuthData.user;
   if (inMemoryCurrentUser) return inMemoryCurrentUser;
   try {
-    const authDataStr = localStorage.getItem('piket_auth_data');
-    if (authDataStr) {
-      const parsed = JSON.parse(authDataStr);
-      if (parsed?.user) {
-        inMemoryCurrentUser = parsed.user;
-        return parsed.user;
+    if (typeof localStorage !== 'undefined') {
+      const authDataStr = localStorage.getItem('piket_auth_data');
+      if (authDataStr) {
+        const parsed = JSON.parse(authDataStr);
+        if (parsed?.user) {
+          inMemoryCurrentUser = parsed.user;
+          inMemoryAuthData = parsed;
+          return parsed.user;
+        }
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+  return null;
+}
+
+export function getCurrentAuthData(): {
+  user: User;
+  teacher?: Teacher;
+  assigned_class?: SchoolClass;
+} | null {
+  if (inMemoryAuthData) return inMemoryAuthData;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const authDataStr = localStorage.getItem('piket_auth_data');
+      if (authDataStr) {
+        const parsed = JSON.parse(authDataStr);
+        inMemoryAuthData = parsed;
+        return parsed;
       }
     }
   } catch (e) {
@@ -75,16 +106,19 @@ export const api = {
     const res = await firestoreService.loginUser(username, password);
     setApiToken(res.token);
     inMemoryCurrentUser = res.user;
+    inMemoryAuthData = {
+      token: res.token,
+      user: res.user,
+      teacher: res.teacher,
+      assigned_class: res.assigned_class,
+    };
     try {
-      localStorage.setItem(
-        'piket_auth_data',
-        JSON.stringify({
-          token: res.token,
-          user: res.user,
-          teacher: res.teacher,
-          assigned_class: res.assigned_class,
-        })
-      );
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(
+          'piket_auth_data',
+          JSON.stringify(inMemoryAuthData)
+        );
+      }
     } catch (e) {
       // ignore
     }
@@ -104,6 +138,16 @@ export const api = {
       );
     }
     setApiToken(null);
+    inMemoryCurrentUser = null;
+    inMemoryAuthData = null;
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem('piket_auth_data');
+        localStorage.removeItem('piket_auth_token');
+      }
+    } catch (e) {
+      // ignore
+    }
     return { message: 'Berhasil keluar.' };
   },
 
@@ -177,26 +221,35 @@ export const api = {
 
   async createClass(payload: Partial<SchoolClass>): Promise<{ message: string; class: SchoolClass }> {
     const currentUser = getCurrentStoredUser();
+    if (!currentUser || currentUser.role !== 'admin') {
+      throw new Error('Akses ditolak: Hanya Administrator yang berwenang menambah kelas.');
+    }
     return firestoreService.createClass(
       payload,
-      currentUser ? { id: currentUser.id, name: currentUser.name, role: currentUser.role } : undefined
+      { id: currentUser.id, name: currentUser.name, role: currentUser.role }
     );
   },
 
   async updateClass(id: string, payload: Partial<SchoolClass>): Promise<{ message: string; class: SchoolClass }> {
     const currentUser = getCurrentStoredUser();
+    if (!currentUser || currentUser.role !== 'admin') {
+      throw new Error('Akses ditolak: Hanya Administrator yang berwenang mengubah kelas.');
+    }
     return firestoreService.updateClass(
       id,
       payload,
-      currentUser ? { id: currentUser.id, name: currentUser.name, role: currentUser.role } : undefined
+      { id: currentUser.id, name: currentUser.name, role: currentUser.role }
     );
   },
 
   async deleteClass(id: string): Promise<{ message: string }> {
     const currentUser = getCurrentStoredUser();
+    if (!currentUser || currentUser.role !== 'admin') {
+      throw new Error('Akses ditolak: Hanya Administrator yang berwenang menghapus kelas.');
+    }
     return firestoreService.deleteClass(
       id,
-      currentUser ? { id: currentUser.id, name: currentUser.name, role: currentUser.role } : undefined
+      { id: currentUser.id, name: currentUser.name, role: currentUser.role }
     );
   },
 
@@ -207,73 +260,109 @@ export const api = {
 
   async createTeacher(payload: any): Promise<{ message: string; teacher: Teacher }> {
     const currentUser = getCurrentStoredUser();
+    if (!currentUser || currentUser.role !== 'admin') {
+      throw new Error('Akses ditolak: Hanya Administrator yang berwenang menambah data guru.');
+    }
     return firestoreService.createTeacher(
       payload,
-      currentUser ? { id: currentUser.id, name: currentUser.name, role: currentUser.role } : undefined
+      { id: currentUser.id, name: currentUser.name, role: currentUser.role }
     );
   },
 
   async updateTeacher(id: string, payload: any): Promise<{ message: string; teacher: Teacher }> {
     const currentUser = getCurrentStoredUser();
+    if (!currentUser || currentUser.role !== 'admin') {
+      throw new Error('Akses ditolak: Hanya Administrator yang berwenang mengubah data guru.');
+    }
     return firestoreService.updateTeacher(
       id,
       payload,
-      currentUser ? { id: currentUser.id, name: currentUser.name, role: currentUser.role } : undefined
+      { id: currentUser.id, name: currentUser.name, role: currentUser.role }
     );
   },
 
   async deleteTeacher(id: string): Promise<{ message: string }> {
     const currentUser = getCurrentStoredUser();
+    if (!currentUser || currentUser.role !== 'admin') {
+      throw new Error('Akses ditolak: Hanya Administrator yang berwenang menonaktifkan guru.');
+    }
     return firestoreService.deleteTeacher(
       id,
-      currentUser ? { id: currentUser.id, name: currentUser.name, role: currentUser.role } : undefined
+      { id: currentUser.id, name: currentUser.name, role: currentUser.role }
     );
   },
 
   // ---------------- STUDENTS ----------------
   async getStudents(params?: { class_id?: string; search?: string }): Promise<{ students: Student[] }> {
+    const auth = getCurrentAuthData();
+    if (auth?.user?.role === 'guru') {
+      const allowedClassId = auth.assigned_class?.id || auth.teacher?.class_id;
+      // If a Guru tries to query another class, REJECT with Access Denied
+      if (params?.class_id && allowedClassId && params.class_id !== allowedClassId) {
+        throw new Error('Akses ditolak: Anda tidak memiliki izin untuk melihat data siswa dari kelas lain.');
+      }
+      // If class_id was not explicitly specified, restrict to the teacher's assigned class
+      if (!params?.class_id && allowedClassId) {
+        return firestoreService.getStudents({ ...params, class_id: allowedClassId });
+      }
+    }
     return firestoreService.getStudents(params);
   },
 
   async createStudent(payload: Partial<Student>): Promise<{ message: string; student: Student }> {
     const currentUser = getCurrentStoredUser();
+    if (!currentUser || currentUser.role !== 'admin') {
+      throw new Error('Akses ditolak: Hanya Administrator yang berwenang menambah data siswa.');
+    }
     return firestoreService.createStudent(
       payload,
-      currentUser ? { id: currentUser.id, name: currentUser.name, role: currentUser.role } : undefined
+      { id: currentUser.id, name: currentUser.name, role: currentUser.role }
     );
   },
 
   async updateStudent(id: string, payload: Partial<Student>): Promise<{ message: string; student: Student }> {
     const currentUser = getCurrentStoredUser();
+    if (!currentUser || currentUser.role !== 'admin') {
+      throw new Error('Akses ditolak: Hanya Administrator yang berwenang mengubah data siswa.');
+    }
     return firestoreService.updateStudent(
       id,
       payload,
-      currentUser ? { id: currentUser.id, name: currentUser.name, role: currentUser.role } : undefined
+      { id: currentUser.id, name: currentUser.name, role: currentUser.role }
     );
   },
 
   async moveStudent(id: string, target_class_id: string): Promise<{ message: string; student: Student }> {
     const currentUser = getCurrentStoredUser();
+    if (!currentUser || currentUser.role !== 'admin') {
+      throw new Error('Akses ditolak: Hanya Administrator yang berwenang memindahkan siswa.');
+    }
     return firestoreService.moveStudent(
       id,
       target_class_id,
-      currentUser ? { id: currentUser.id, name: currentUser.name, role: currentUser.role } : undefined
+      { id: currentUser.id, name: currentUser.name, role: currentUser.role }
     );
   },
 
   async deleteStudent(id: string): Promise<{ message: string }> {
     const currentUser = getCurrentStoredUser();
+    if (!currentUser || currentUser.role !== 'admin') {
+      throw new Error('Akses ditolak: Hanya Administrator yang berwenang menghapus siswa.');
+    }
     return firestoreService.deleteStudent(
       id,
-      currentUser ? { id: currentUser.id, name: currentUser.name, role: currentUser.role } : undefined
+      { id: currentUser.id, name: currentUser.name, role: currentUser.role }
     );
   },
 
   async importStudents(items: any[]): Promise<{ message: string; total_imported: number; failed_count: number; errors: any[] }> {
     const currentUser = getCurrentStoredUser();
+    if (!currentUser || currentUser.role !== 'admin') {
+      throw new Error('Akses ditolak: Hanya Administrator yang berwenang mengimpor data siswa.');
+    }
     return firestoreService.importStudents(
       items,
-      currentUser ? { id: currentUser.id, name: currentUser.name, role: currentUser.role } : undefined
+      { id: currentUser.id, name: currentUser.name, role: currentUser.role }
     );
   },
 
@@ -286,11 +375,29 @@ export const api = {
     end_date?: string;
     status?: string;
   }): Promise<{ reports: DailyReport[] }> {
+    const auth = getCurrentAuthData();
+    if (auth?.user?.role === 'guru') {
+      const allowedClassId = auth.assigned_class?.id || auth.teacher?.class_id;
+      if (params?.class_id && allowedClassId && params.class_id !== allowedClassId) {
+        throw new Error('Akses ditolak: Guru tidak diizinkan membuka arsip laporan kelas lain.');
+      }
+      if (!params?.class_id && allowedClassId) {
+        return firestoreService.getDailyReports({ ...params, class_id: allowedClassId });
+      }
+    }
     return firestoreService.getDailyReports(params);
   },
 
   async getReportById(id: string): Promise<{ report: DailyReport }> {
-    return firestoreService.getDailyReportById(id);
+    const res = await firestoreService.getDailyReportById(id);
+    const auth = getCurrentAuthData();
+    if (auth?.user?.role === 'guru') {
+      const allowedClassId = auth.assigned_class?.id || auth.teacher?.class_id;
+      if (allowedClassId && res.report.class_id !== allowedClassId) {
+        throw new Error('Akses ditolak: Anda tidak memiliki hak akses untuk membuka laporan kelas lain.');
+      }
+    }
+    return res;
   },
 
   async getReportDetail(id: string): Promise<{ report: DailyReport }> {
@@ -298,6 +405,13 @@ export const api = {
   },
 
   async checkReportDuplicate(classId: string, date: string): Promise<{ exists: boolean; report?: DailyReport }> {
+    const auth = getCurrentAuthData();
+    if (auth?.user?.role === 'guru') {
+      const allowedClassId = auth.assigned_class?.id || auth.teacher?.class_id;
+      if (allowedClassId && classId !== allowedClassId) {
+        throw new Error('Akses ditolak: Guru tidak diizinkan memeriksa laporan kelas lain.');
+      }
+    }
     const res = await firestoreService.getDailyReports({ class_id: classId, date });
     if (res.reports && res.reports.length > 0) {
       return { exists: true, report: res.reports[0] };
@@ -306,6 +420,13 @@ export const api = {
   },
 
   async createReport(payload: Partial<DailyReport> & { attendance_items?: any[] }): Promise<{ message: string; report: DailyReport }> {
+    const auth = getCurrentAuthData();
+    if (auth?.user?.role === 'guru') {
+      const allowedClassId = auth.assigned_class?.id || auth.teacher?.class_id;
+      if (payload.class_id && allowedClassId && payload.class_id !== allowedClassId) {
+        throw new Error('Akses ditolak: Anda tidak dapat membuat laporan untuk kelas lain.');
+      }
+    }
     const currentUser = getCurrentStoredUser();
     return firestoreService.saveDailyReport(
       payload,
@@ -318,6 +439,13 @@ export const api = {
   },
 
   async updateReport(id: string, payload: Partial<DailyReport> & { attendance_items?: any[] }): Promise<{ message: string; report: DailyReport }> {
+    const auth = getCurrentAuthData();
+    if (auth?.user?.role === 'guru') {
+      const allowedClassId = auth.assigned_class?.id || auth.teacher?.class_id;
+      if (payload.class_id && allowedClassId && payload.class_id !== allowedClassId) {
+        throw new Error('Akses ditolak: Anda tidak diizinkan mengubah laporan kelas lain.');
+      }
+    }
     const currentUser = getCurrentStoredUser();
     return firestoreService.saveDailyReport(
       { ...payload, id },
@@ -327,30 +455,43 @@ export const api = {
 
   async lockReport(id: string): Promise<{ message: string; report: DailyReport }> {
     const currentUser = getCurrentStoredUser();
+    if (!currentUser || currentUser.role !== 'admin') {
+      throw new Error('Akses ditolak: Hanya Administrator yang berwenang mengunci laporan.');
+    }
     return firestoreService.lockReport(
       id,
-      currentUser ? { id: currentUser.id, name: currentUser.name, role: currentUser.role } : undefined
+      { id: currentUser.id, name: currentUser.name, role: currentUser.role }
     );
   },
 
   async reopenReport(id: string): Promise<{ message: string; report: DailyReport }> {
     const currentUser = getCurrentStoredUser();
+    if (!currentUser || currentUser.role !== 'admin') {
+      throw new Error('Akses ditolak: Hanya Administrator yang berwenang membuka kunci laporan.');
+    }
     return firestoreService.reopenReport(
       id,
-      currentUser ? { id: currentUser.id, name: currentUser.name, role: currentUser.role } : undefined
+      { id: currentUser.id, name: currentUser.name, role: currentUser.role }
     );
   },
 
   async deleteReport(id: string): Promise<{ message: string }> {
     const currentUser = getCurrentStoredUser();
+    if (!currentUser || currentUser.role !== 'admin') {
+      throw new Error('Akses ditolak: Hanya Administrator yang berwenang menghapus laporan.');
+    }
     return firestoreService.deleteReport(
       id,
-      currentUser ? { id: currentUser.id, name: currentUser.name, role: currentUser.role } : undefined
+      { id: currentUser.id, name: currentUser.name, role: currentUser.role }
     );
   },
 
   // ---------------- DASHBOARD & STATS ----------------
   async getAdminDashboard(date?: string): Promise<DashboardAdminStats> {
+    const currentUser = getCurrentStoredUser();
+    if (!currentUser || currentUser.role !== 'admin') {
+      throw new Error('Akses ditolak: Hanya Administrator yang berwenang mengakses Dashboard Admin.');
+    }
     return firestoreService.getAdminDashboardStats(date);
   },
 
@@ -369,6 +510,10 @@ export const api = {
   },
 
   async getAdminRekap(params?: Record<string, string>): Promise<{ reports: DailyReport[]; summary: any }> {
+    const currentUser = getCurrentStoredUser();
+    if (!currentUser || currentUser.role !== 'admin') {
+      throw new Error('Akses ditolak: Hanya Administrator yang berwenang mengakses Rekapitulasi Laporan.');
+    }
     const res = await firestoreService.getDailyReports(params as any);
     let totalPresent = 0;
     let totalSick = 0;
@@ -399,6 +544,10 @@ export const api = {
   },
 
   async getAuditLogs(params?: Record<string, string>): Promise<{ logs: AuditLog[] }> {
+    const currentUser = getCurrentStoredUser();
+    if (!currentUser || currentUser.role !== 'admin') {
+      throw new Error('Akses ditolak: Hanya Administrator yang berwenang melihat Audit Logs.');
+    }
     return firestoreService.getAuditLogs(params);
   },
 
