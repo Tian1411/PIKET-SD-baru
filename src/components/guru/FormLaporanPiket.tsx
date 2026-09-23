@@ -1,7 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../services/api';
-import { DailyReport, AttendanceStatus, CleanlinessStatus, Student } from '../../types';
+import {
+  DailyReport,
+  AttendanceStatus,
+  CleanlinessStatus,
+  Student,
+  SchoolClass,
+  Teacher,
+} from '../../types';
 import {
   Calendar,
   Check,
@@ -14,6 +21,8 @@ import {
   CheckCircle2,
   Lock,
   ArrowLeft,
+  Loader2,
+  Users,
 } from 'lucide-react';
 
 interface FormLaporanPiketProps {
@@ -23,10 +32,9 @@ interface FormLaporanPiketProps {
 }
 
 const PIKET_ACTIVITIES = [
-  'Menyapu dan mengepel lantai kelas',
-  'Membersihkan papan tulis dan perlengkapan',
-  'Merapikan meja, kursi, dan sudut baca',
-  'Membuang sampah ke tempat pembuangan akhir',
+  'Membersihkan papan tulis dan meja guru',
+  'Menyapu lantai ruang kelas dan merapikan tempat sampah',
+  'Mengecek kelengkapan alat tulis dan absensi kelas',
   'Menyiram tanaman dan membersihkan teras depan',
   'Memastikan jendela dan ventilasi terbuka dengan baik',
 ];
@@ -37,6 +45,21 @@ export const FormLaporanPiket: React.FC<FormLaporanPiketProps> = ({
   initialReportId,
 }) => {
   const { user, teacher, assignedClass, settings } = useAuth();
+  const isAdmin = user?.role === 'admin';
+
+  // Admin select lists
+  const [classesList, setClassesList] = useState<SchoolClass[]>([]);
+  const [teachersList, setTeachersList] = useState<Teacher[]>([]);
+
+  // Selected class & teacher
+  const [selectedClassId, setSelectedClassId] = useState<string>('');
+  const [selectedClassName, setSelectedClassName] = useState<string>('');
+  const [selectedTeacherId, setSelectedTeacherId] = useState<string>('');
+  const [selectedTeacherName, setSelectedTeacherName] = useState<string>('');
+  const [selectedTeacherNip, setSelectedTeacherNip] = useState<string>('');
+
+  const [isTeacherLoading, setIsTeacherLoading] = useState<boolean>(true);
+  const [teacherConnectionError, setTeacherConnectionError] = useState<string | null>(null);
 
   const [reportDate, setReportDate] = useState<string>(
     () => new Date().toISOString().split('T')[0]
@@ -61,7 +84,10 @@ export const FormLaporanPiket: React.FC<FormLaporanPiketProps> = ({
   const [isLocked, setIsLocked] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [statusMessage, setStatusMessage] = useState<{
+    type: 'success' | 'error' | 'info';
+    text: string;
+  } | null>(null);
 
   // Compute Day Name in Indonesian whenever date changes
   useEffect(() => {
@@ -72,10 +98,117 @@ export const FormLaporanPiket: React.FC<FormLaporanPiketProps> = ({
     setDayName(days[d.getDay()]);
   }, [reportDate]);
 
-  // Load students and check existing report for this class and date
+  // Initial load: fetch classes/teachers for Admin, or resolve profile for Guru
   useEffect(() => {
-    async function initForm() {
-      if (!assignedClass) {
+    let isMounted = true;
+
+    async function initIdentity() {
+      setIsTeacherLoading(true);
+      setTeacherConnectionError(null);
+
+      try {
+        if (isAdmin) {
+          // ADMIN: Load classes and teachers for dropdown selection
+          const [clsRes, tchRes] = await Promise.all([
+            api.getClasses(),
+            api.getTeachers(),
+          ]);
+
+          if (!isMounted) return;
+
+          const activeClasses = clsRes.classes || [];
+          const activeTeachers = tchRes.teachers || [];
+          setClassesList(activeClasses);
+          setTeachersList(activeTeachers);
+
+          if (initialReportId) {
+            const detailRes = await api.getReportDetail(initialReportId);
+            const rep = detailRes.report;
+            if (rep && isMounted) {
+              setSelectedClassId(rep.class_id);
+              setSelectedClassName(rep.class_name || 'Kelas');
+              setSelectedTeacherId(rep.teacher_id);
+              setSelectedTeacherName(rep.teacher_name || '');
+              const foundTch = activeTeachers.find((t) => t.id === rep.teacher_id);
+              if (foundTch) setSelectedTeacherNip(foundTch.nip || '-');
+            }
+          } else {
+            // Default selection
+            if (activeClasses.length > 0 && !selectedClassId) {
+              setSelectedClassId(activeClasses[0].id);
+              setSelectedClassName(activeClasses[0].class_name || 'Kelas');
+            }
+            if (activeTeachers.length > 0 && !selectedTeacherId) {
+              setSelectedTeacherId(activeTeachers[0].id);
+              setSelectedTeacherName(activeTeachers[0].name);
+              setSelectedTeacherNip(activeTeachers[0].nip || '-');
+            }
+          }
+          setIsTeacherLoading(false);
+        } else {
+          // GURU: Resolve teacher and assigned class from context or Firestore
+          let resolvedTeacher = teacher;
+          let resolvedClass = assignedClass;
+
+          if (!resolvedTeacher) {
+            try {
+              const meRes = await api.getMe();
+              if (meRes?.user?.teacher) {
+                resolvedTeacher = meRes.user.teacher;
+              }
+              if (meRes?.user?.assigned_class) {
+                resolvedClass = meRes.user.assigned_class;
+              }
+            } catch (err) {
+              console.warn('Failed to fetch teacher in FormLaporanPiket:', err);
+            }
+          }
+
+          if (!isMounted) return;
+
+          if (resolvedTeacher) {
+            setSelectedTeacherId(resolvedTeacher.id);
+            setSelectedTeacherName(resolvedTeacher.name);
+            setSelectedTeacherNip(resolvedTeacher.nip);
+            if (resolvedClass) {
+              setSelectedClassId(resolvedClass.id);
+              setSelectedClassName(resolvedClass.class_name);
+            } else if (resolvedTeacher.class_id) {
+              setSelectedClassId(resolvedTeacher.class_id);
+              setSelectedClassName(resolvedTeacher.class_name || 'Kelas');
+            }
+            setIsTeacherLoading(false);
+          } else {
+            setIsTeacherLoading(false);
+            setTeacherConnectionError('Akun Anda belum terhubung dengan data guru. Hubungi Admin.');
+          }
+        }
+      } catch (err: any) {
+        if (isMounted) {
+          setIsTeacherLoading(false);
+          setTeacherConnectionError(err.message || 'Gagal memuat profil guru.');
+        }
+      }
+    }
+
+    initIdentity();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isAdmin, teacher, assignedClass, initialReportId]);
+
+  // Determine active class id to fetch students
+  const activeClassId = isAdmin
+    ? selectedClassId
+    : assignedClass?.id || selectedClassId;
+
+  // Load students and check existing report whenever activeClassId or reportDate changes
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadStudentsAndReport() {
+      if (!activeClassId) {
         setIsLoading(false);
         return;
       }
@@ -84,22 +217,26 @@ export const FormLaporanPiket: React.FC<FormLaporanPiketProps> = ({
       setStatusMessage(null);
 
       try {
-        // Fetch class students
-        const stdRes = await api.getStudents({ class_id: assignedClass.id });
+        // 1. Fetch class students
+        const stdRes = await api.getStudents({ class_id: activeClassId });
+        if (!isMounted) return;
+
         const classStudents = stdRes.students || [];
         setStudents(classStudents);
 
-        // Check if report exists for this date or loading specific initialReportId
+        // 2. Check if report exists for this date or loading specific initialReportId
         let rep: DailyReport | null = null;
         if (initialReportId) {
           const detailRes = await api.getReportDetail(initialReportId);
           rep = detailRes.report;
         } else {
-          const checkRes = await api.checkReportDuplicate(assignedClass.id, reportDate);
+          const checkRes = await api.checkReportDuplicate(activeClassId, reportDate);
           if (checkRes.exists && checkRes.report) {
             rep = checkRes.report;
           }
         }
+
+        if (!isMounted) return;
 
         if (rep) {
           setExistingReport(rep);
@@ -108,6 +245,11 @@ export const FormLaporanPiket: React.FC<FormLaporanPiketProps> = ({
           setIncidentNotes(rep.incident_notes || '');
           setFollowUp(rep.follow_up || '');
           setIsLocked(rep.status === 'locked');
+
+          if (isAdmin) {
+            setSelectedTeacherId(rep.teacher_id);
+            setSelectedTeacherName(rep.teacher_name || '');
+          }
 
           // Map attendance
           const map: Record<string, { status: AttendanceStatus; note: string }> = {};
@@ -123,72 +265,106 @@ export const FormLaporanPiket: React.FC<FormLaporanPiketProps> = ({
           }
           setAttendanceMap(map);
 
-          if (rep.status === 'locked') {
+          if (!initialReportId) {
             setStatusMessage({
               type: 'info',
-              text: 'Laporan ini telah DIKUNCI oleh Admin. Hanya Admin yang dapat membukanya kembali untuk diedit.',
+              text: `Laporan piket untuk tanggal ${reportDate} sudah ada sebelumnya (Status: ${rep.status.toUpperCase()}). Anda sedang mengedit laporan ini.`,
             });
           }
         } else {
           setExistingReport(null);
           setIsLocked(false);
+          setCleanlinessStatus('Baik');
+          setSelectedActivities([PIKET_ACTIVITIES[0], PIKET_ACTIVITIES[1], PIKET_ACTIVITIES[2]]);
+          setIncidentNotes('Tidak ada kejadian khusus.');
+          setFollowUp('');
 
-          // Check if there is draft in localStorage
-          const localDraftKey = `draft_piket_${assignedClass.id}_${reportDate}`;
+          // Initialize attendance from local draft if exists, else all 'H'
+          const localDraftKey = `draft_piket_${activeClassId}_${reportDate}`;
           const localDraft = localStorage.getItem(localDraftKey);
 
           if (localDraft) {
             try {
-              const parsed = JSON.parse(localDraft);
-              setAttendanceMap(parsed.attendanceMap || {});
-              setCleanlinessStatus(parsed.cleanlinessStatus || 'Baik');
-              setSelectedActivities(parsed.selectedActivities || []);
-              setIncidentNotes(parsed.incidentNotes || 'Tidak ada kejadian khusus.');
-              setFollowUp(parsed.followUp || '');
+              const parsedDraft = JSON.parse(localDraft);
+              setCleanlinessStatus(parsedDraft.cleanliness_status || 'Baik');
+              setSelectedActivities(parsedDraft.activity_notes || []);
+              setIncidentNotes(parsedDraft.incident_notes || '');
+              setFollowUp(parsedDraft.follow_up || '');
+              setAttendanceMap(parsedDraft.attendanceMap || {});
               setStatusMessage({
                 type: 'info',
-                text: 'Draf lokal yang belum tersimpan berhasil dipulihkan.',
+                text: 'Draf lokal yang belum dikirim berhasil dimuat kembali.',
               });
             } catch (e) {
-              initDefaultAttendance(classStudents);
+              const map: Record<string, { status: AttendanceStatus; note: string }> = {};
+              classStudents.forEach((s) => {
+                map[s.id] = { status: 'H', note: '' };
+              });
+              setAttendanceMap(map);
             }
           } else {
-            initDefaultAttendance(classStudents);
+            const map: Record<string, { status: AttendanceStatus; note: string }> = {};
+            classStudents.forEach((s) => {
+              map[s.id] = { status: 'H', note: '' };
+            });
+            setAttendanceMap(map);
           }
         }
       } catch (err: any) {
-        setStatusMessage({
-          type: 'error',
-          text: err.message || 'Gagal memuat data kelas dan siswa.',
-        });
+        if (isMounted) {
+          setStatusMessage({
+            type: 'error',
+            text: err.message || 'Gagal memuat data siswa kelas.',
+          });
+        }
       } finally {
-        setIsLoading(false);
+        if (isMounted) {
+          setIsLoading(false);
+        }
       }
     }
 
-    initForm();
-  }, [assignedClass, reportDate, initialReportId]);
+    loadStudentsAndReport();
 
-  const initDefaultAttendance = (stdList: Student[]) => {
-    const map: Record<string, { status: AttendanceStatus; note: string }> = {};
-    stdList.forEach((s) => {
-      map[s.id] = { status: 'H', note: '' };
+    return () => {
+      isMounted = false;
+    };
+  }, [activeClassId, reportDate, initialReportId, isAdmin]);
+
+  // Attendance Counters calculation
+  const counters = useMemo(() => {
+    let present = 0;
+    let sick = 0;
+    let permit = 0;
+    let absent = 0;
+
+    Object.values(attendanceMap).forEach((item) => {
+      if (item.status === 'H') present++;
+      else if (item.status === 'S') sick++;
+      else if (item.status === 'I') permit++;
+      else if (item.status === 'A') absent++;
     });
-    setAttendanceMap(map);
-  };
 
-  // Quick Action: Mark All as Present
+    return {
+      total: students.length,
+      present,
+      sick,
+      permit,
+      absent,
+    };
+  }, [attendanceMap, students]);
+
+  // Quick Action: 1-Click All Present (H)
   const handleMarkAllPresent = () => {
-    const newMap = { ...attendanceMap };
+    const newMap: Record<string, { status: AttendanceStatus; note: string }> = {};
     students.forEach((s) => {
       newMap[s.id] = { status: 'H', note: '' };
     });
     setAttendanceMap(newMap);
   };
 
-  // Individual student status change
+  // Change individual status
   const handleStatusChange = (studentId: string, status: AttendanceStatus) => {
-    if (isLocked) return;
     setAttendanceMap((prev) => ({
       ...prev,
       [studentId]: {
@@ -198,52 +374,64 @@ export const FormLaporanPiket: React.FC<FormLaporanPiketProps> = ({
     }));
   };
 
+  // Change individual note
   const handleNoteChange = (studentId: string, note: string) => {
-    if (isLocked) return;
     setAttendanceMap((prev) => ({
       ...prev,
       [studentId]: {
-        ...prev[studentId],
+        status: prev[studentId]?.status || 'H',
         note,
       },
     }));
   };
 
-  // Real-time counter calculation
-  const counters = useMemo(() => {
-    let present = 0;
-    let sick = 0;
-    let permit = 0;
-    let absent = 0;
-
-    students.forEach((s) => {
-      const att = attendanceMap[s.id];
-      if (att) {
-        if (att.status === 'H') present++;
-        else if (att.status === 'S') sick++;
-        else if (att.status === 'I') permit++;
-        else if (att.status === 'A') absent++;
-      }
-    });
-
-    const total = students.length;
-    const percentage = total > 0 ? Math.round((present / total) * 100) : 0;
-
-    return { total, present, sick, permit, absent, percentage };
-  }, [students, attendanceMap]);
-
-  // Activity toggle
+  // Toggle activity checkbox
   const toggleActivity = (act: string) => {
-    if (isLocked) return;
     setSelectedActivities((prev) =>
       prev.includes(act) ? prev.filter((a) => a !== act) : [...prev, act]
     );
   };
 
+  // Determine effective teacher and class info
+  const effectiveTeacherId = isAdmin
+    ? selectedTeacherId
+    : teacher?.id || selectedTeacherId || user?.teacher_id || (user as any)?.teacherId || '';
+
+  const effectiveTeacherName = isAdmin
+    ? teachersList.find((t) => t.id === selectedTeacherId)?.name || selectedTeacherName
+    : teacher?.name || selectedTeacherName || user?.name || '';
+
+  const effectiveTeacherNip = isAdmin
+    ? teachersList.find((t) => t.id === selectedTeacherId)?.nip || selectedTeacherNip
+    : teacher?.nip || selectedTeacherNip || '-';
+
+  const effectiveClassId = isAdmin
+    ? selectedClassId
+    : assignedClass?.id || selectedClassId || '';
+
+  const effectiveClassName = isAdmin
+    ? classesList.find((c) => c.id === selectedClassId)?.class_name || selectedClassName
+    : assignedClass?.class_name || selectedClassName || 'Kelas';
+
   // Save as Draft or Submit
   const handleSave = async (isSubmit: boolean) => {
-    if (!assignedClass || !teacher) {
-      alert('Informasi kelas dan guru tidak lengkap.');
+    if (isTeacherLoading) {
+      alert('Data guru belum tersedia. Silakan tunggu beberapa saat lalu coba lagi.');
+      return;
+    }
+
+    if (teacherConnectionError && !isAdmin) {
+      alert(teacherConnectionError);
+      return;
+    }
+
+    if (!effectiveTeacherId) {
+      alert('Guru piket wajib ditentukan.');
+      return;
+    }
+
+    if (!effectiveClassId) {
+      alert('Kelas wajib dipilih.');
       return;
     }
 
@@ -273,15 +461,27 @@ export const FormLaporanPiket: React.FC<FormLaporanPiketProps> = ({
     }));
 
     const payload = {
-      class_id: assignedClass.id,
+      class_id: effectiveClassId,
+      classId: effectiveClassId,
+      class_name: effectiveClassName,
+      className: effectiveClassName,
+      teacher_id: effectiveTeacherId,
+      teacherId: effectiveTeacherId,
+      teacher_name: effectiveTeacherName,
+      teacherName: effectiveTeacherName,
       date: reportDate,
       day_name: dayName,
-      academic_year: settings?.academic_year || assignedClass.academic_year || '2026/2027',
+      academic_year: settings?.academic_year || '2026/2027',
+      academicYear: settings?.academic_year || '2026/2027',
       semester: settings?.semester || 'Semester Ganjil',
       cleanliness_status: cleanlinessStatus,
+      cleanlinessStatus: cleanlinessStatus,
       activity_notes: selectedActivities,
+      activityNotes: selectedActivities,
       incident_notes: incidentNotes.trim() || 'Tidak ada kejadian khusus.',
+      incidentNotes: incidentNotes.trim() || 'Tidak ada kejadian khusus.',
       follow_up: followUp.trim(),
+      followUp: followUp.trim(),
       attendance_items,
       status: isSubmit ? 'submitted' : 'draft',
     };
@@ -294,7 +494,7 @@ export const FormLaporanPiket: React.FC<FormLaporanPiketProps> = ({
       }
 
       // Clear local draft
-      const localDraftKey = `draft_piket_${assignedClass.id}_${reportDate}`;
+      const localDraftKey = `draft_piket_${effectiveClassId}_${reportDate}`;
       localStorage.removeItem(localDraftKey);
 
       setStatusMessage({
@@ -317,6 +517,9 @@ export const FormLaporanPiket: React.FC<FormLaporanPiketProps> = ({
     }
   };
 
+  const isFormDisabled =
+    isSubmitting || isTeacherLoading || !effectiveTeacherId || !effectiveClassId;
+
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-20">
       {/* Top Bar with Back button & Heading */}
@@ -331,13 +534,26 @@ export const FormLaporanPiket: React.FC<FormLaporanPiketProps> = ({
 
         <div className="text-right">
           <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-            Formulir Piket
+            Formulir Piket Harian
           </span>
           <h2 className="text-base sm:text-lg font-black text-slate-900 leading-tight">
-            Kelas {assignedClass?.class_name}
+            Kelas {effectiveClassName}
           </h2>
         </div>
       </div>
+
+      {/* Teacher Connection Warning */}
+      {teacherConnectionError && !isAdmin && (
+        <div className="flex items-start gap-2.5 p-4 rounded-2xl border border-rose-200 bg-rose-50 text-rose-800 text-xs font-semibold animate-in fade-in">
+          <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-bold">{teacherConnectionError}</p>
+            <p className="text-[11px] text-rose-700 mt-0.5">
+              Identitas guru belum tertaut ke akun pengguna Anda. Laporan tidak dapat disimpan sampai akun terhubung.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Alerts */}
       {statusMessage && (
@@ -368,7 +584,7 @@ export const FormLaporanPiket: React.FC<FormLaporanPiketProps> = ({
         </div>
       ) : (
         <>
-          {/* SECTION 1: Identitas Otomatis */}
+          {/* SECTION 1: Identitas Laporan Piket */}
           <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200/80 shadow-sm">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
               <Calendar className="w-4 h-4 text-blue-600" />
@@ -376,6 +592,7 @@ export const FormLaporanPiket: React.FC<FormLaporanPiketProps> = ({
             </h3>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {/* Tanggal Piket */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
                   Pilih Tanggal Piket
@@ -392,34 +609,104 @@ export const FormLaporanPiket: React.FC<FormLaporanPiketProps> = ({
                 </span>
               </div>
 
+              {/* Guru Piket */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Guru Piket / Wali Kelas
+                  Guru Piket
                 </label>
-                <input
-                  type="text"
-                  readOnly
-                  value={teacher?.name || user?.name || ''}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-800"
-                />
-                <span className="text-[11px] text-slate-500 mt-1 block">
-                  NIP: {teacher?.nip || '-'}
-                </span>
+                {isAdmin ? (
+                  <>
+                    <select
+                      id="select-teacher-piket"
+                      value={selectedTeacherId}
+                      disabled={isLocked}
+                      onChange={(e) => {
+                        const tId = e.target.value;
+                        setSelectedTeacherId(tId);
+                        const tch = teachersList.find((t) => t.id === tId);
+                        setSelectedTeacherName(tch?.name || '');
+                        setSelectedTeacherNip(tch?.nip || '');
+                      }}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600 bg-white"
+                    >
+                      <option value="">-- Pilih Guru Piket --</option>
+                      {teachersList.map((tch) => (
+                        <option key={tch.id} value={tch.id}>
+                          {tch.name} {tch.nip ? `(NIP: ${tch.nip})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-[11px] text-slate-500 mt-1 block font-medium">
+                      Admin dapat memilih guru piket dari daftar guru.
+                    </span>
+                  </>
+                ) : isTeacherLoading ? (
+                  <div className="flex items-center gap-2 p-2.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-700 text-xs font-semibold">
+                    <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                    <span>Memuat data guru...</span>
+                  </div>
+                ) : (
+                  <>
+                    <input
+                      type="text"
+                      readOnly
+                      value={effectiveTeacherName || 'Belum Terhubung'}
+                      className={`w-full px-3 py-2 rounded-xl border text-sm font-semibold ${
+                        teacherConnectionError
+                          ? 'border-rose-300 bg-rose-50 text-rose-800'
+                          : 'border-slate-200 bg-slate-50 text-slate-800'
+                      }`}
+                    />
+                    <span className="text-[11px] text-slate-500 mt-1 block font-medium">
+                      NIP: {effectiveTeacherNip || '-'}
+                    </span>
+                  </>
+                )}
               </div>
 
+              {/* Kelas */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Tahun Pelajaran & Semester
+                  Kelas
                 </label>
-                <input
-                  type="text"
-                  readOnly
-                  value={`${settings?.academic_year || '2026/2027'} (${settings?.semester || 'Semester Ganjil'})`}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-800"
-                />
-                <span className="text-[11px] text-slate-500 mt-1 block">
-                  Kelas: {assignedClass?.class_name}
-                </span>
+                {isAdmin ? (
+                  <>
+                    <select
+                      id="select-class-piket"
+                      value={selectedClassId}
+                      disabled={isLocked || !!initialReportId}
+                      onChange={(e) => {
+                        const cId = e.target.value;
+                        setSelectedClassId(cId);
+                        const c = classesList.find((cls) => cls.id === cId);
+                        setSelectedClassName(c?.class_name || '');
+                      }}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600 bg-white"
+                    >
+                      <option value="">-- Pilih Kelas --</option>
+                      {classesList.map((cls) => (
+                        <option key={cls.id} value={cls.id}>
+                          Kelas {cls.class_name}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-[11px] text-slate-500 mt-1 block">
+                      Tahun: {settings?.academic_year || '2026/2027'} ({settings?.semester || 'Semester Ganjil'})
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <input
+                      type="text"
+                      readOnly
+                      value={`Kelas ${effectiveClassName}`}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-800"
+                    />
+                    <span className="text-[11px] text-slate-500 mt-1 block">
+                      {settings?.academic_year || '2026/2027'} ({settings?.semester || 'Semester Ganjil'})
+                    </span>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -432,7 +719,7 @@ export const FormLaporanPiket: React.FC<FormLaporanPiketProps> = ({
                   2. Presensi Siswa
                 </h3>
                 <p className="text-sm font-bold text-slate-900 mt-0.5">
-                  Daftar Siswa Kelas {assignedClass?.class_name} ({students.length} Siswa)
+                  Daftar Siswa Kelas {effectiveClassName} ({students.length} Siswa)
                 </p>
               </div>
 
@@ -476,127 +763,136 @@ export const FormLaporanPiket: React.FC<FormLaporanPiketProps> = ({
             </div>
 
             {/* Student List */}
-            <div className="space-y-2 mt-4 max-h-[480px] overflow-y-auto pr-1">
-              {students.map((student, idx) => {
-                const currentStatus = attendanceMap[student.id]?.status || 'H';
-                const currentNote = attendanceMap[student.id]?.note || '';
-                const isNonPresent = currentStatus !== 'H';
+            {students.length === 0 ? (
+              <div className="p-8 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                <Users className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                <p className="text-xs font-semibold text-slate-600">
+                  Tidak ada data siswa untuk kelas ini.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2 mt-4 max-h-[480px] overflow-y-auto pr-1">
+                {students.map((student, idx) => {
+                  const currentStatus = attendanceMap[student.id]?.status || 'H';
+                  const currentNote = attendanceMap[student.id]?.note || '';
+                  const isNonPresent = currentStatus !== 'H';
 
-                return (
-                  <div
-                    key={student.id}
-                    className={`p-3 rounded-2xl border transition-all ${
-                      isNonPresent
-                        ? 'border-amber-300 bg-amber-50/30'
-                        : 'border-slate-200 bg-white hover:border-slate-300'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      {/* Student Info */}
-                      <div className="min-w-0 flex items-center gap-2.5">
-                        <span className="w-6 h-6 rounded-lg bg-slate-100 text-slate-600 text-xs font-bold flex items-center justify-center shrink-0">
-                          {idx + 1}
-                        </span>
-                        <div className="truncate">
-                          <p className="text-xs sm:text-sm font-bold text-slate-900 truncate">
-                            {student.name}
-                          </p>
-                          <p className="text-[11px] text-slate-400 font-mono">
-                            {student.gender === 'P' ? 'Perempuan' : 'Laki-laki'} • NIS: {student.nis}
-                          </p>
+                  return (
+                    <div
+                      key={student.id}
+                      className={`p-3 rounded-2xl border transition-all ${
+                        isNonPresent
+                          ? 'border-amber-300 bg-amber-50/30'
+                          : 'border-slate-200 bg-white hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        {/* Student Info */}
+                        <div className="min-w-0 flex items-center gap-2.5">
+                          <span className="w-6 h-6 rounded-lg bg-slate-100 text-slate-600 text-xs font-bold flex items-center justify-center shrink-0">
+                            {idx + 1}
+                          </span>
+                          <div className="truncate">
+                            <p className="text-xs sm:text-sm font-bold text-slate-900 truncate">
+                              {student.name}
+                            </p>
+                            <p className="text-[11px] text-slate-400 font-mono">
+                              {student.gender === 'P' ? 'Perempuan' : 'Laki-laki'} • NIS: {student.nis}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Tactile Attendance Status Buttons [H] [S] [I] [A] */}
+                        <div className="flex items-center gap-1 shrink-0">
+                          {/* HADIR */}
+                          <button
+                            type="button"
+                            disabled={isLocked}
+                            onClick={() => handleStatusChange(student.id, 'H')}
+                            className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl font-black text-xs sm:text-sm transition-all flex items-center justify-center ${
+                              currentStatus === 'H'
+                                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 scale-105'
+                                : 'bg-slate-100 text-slate-600 hover:bg-emerald-50 hover:text-emerald-700'
+                            }`}
+                            title="Hadir"
+                          >
+                            H
+                          </button>
+
+                          {/* SAKIT */}
+                          <button
+                            type="button"
+                            disabled={isLocked}
+                            onClick={() => handleStatusChange(student.id, 'S')}
+                            className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl font-black text-xs sm:text-sm transition-all flex items-center justify-center ${
+                              currentStatus === 'S'
+                                ? 'bg-amber-600 text-white shadow-md shadow-amber-600/30 scale-105'
+                                : 'bg-slate-100 text-slate-600 hover:bg-amber-50 hover:text-amber-700'
+                            }`}
+                            title="Sakit"
+                          >
+                            S
+                          </button>
+
+                          {/* IZIN */}
+                          <button
+                            type="button"
+                            disabled={isLocked}
+                            onClick={() => handleStatusChange(student.id, 'I')}
+                            className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl font-black text-xs sm:text-sm transition-all flex items-center justify-center ${
+                              currentStatus === 'I'
+                                ? 'bg-sky-600 text-white shadow-md shadow-sky-600/30 scale-105'
+                                : 'bg-slate-100 text-slate-600 hover:bg-sky-50 hover:text-sky-700'
+                            }`}
+                            title="Izin"
+                          >
+                            I
+                          </button>
+
+                          {/* ALPA */}
+                          <button
+                            type="button"
+                            disabled={isLocked}
+                            onClick={() => handleStatusChange(student.id, 'A')}
+                            className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl font-black text-xs sm:text-sm transition-all flex items-center justify-center ${
+                              currentStatus === 'A'
+                                ? 'bg-rose-600 text-white shadow-md shadow-rose-600/30 scale-105'
+                                : 'bg-slate-100 text-slate-600 hover:bg-rose-50 hover:text-rose-700'
+                            }`}
+                            title="Alpa / Tanpa Keterangan"
+                          >
+                            A
+                          </button>
                         </div>
                       </div>
 
-                      {/* Tactile Attendance Status Buttons [H] [S] [I] [A] */}
-                      <div className="flex items-center gap-1 shrink-0">
-                        {/* HADIR */}
-                        <button
-                          type="button"
-                          disabled={isLocked}
-                          onClick={() => handleStatusChange(student.id, 'H')}
-                          className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl font-black text-xs sm:text-sm transition-all flex items-center justify-center ${
-                            currentStatus === 'H'
-                              ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 scale-105'
-                              : 'bg-slate-100 text-slate-600 hover:bg-emerald-50 hover:text-emerald-700'
-                          }`}
-                          title="Hadir"
-                        >
-                          H
-                        </button>
-
-                        {/* SAKIT */}
-                        <button
-                          type="button"
-                          disabled={isLocked}
-                          onClick={() => handleStatusChange(student.id, 'S')}
-                          className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl font-black text-xs sm:text-sm transition-all flex items-center justify-center ${
-                            currentStatus === 'S'
-                              ? 'bg-amber-600 text-white shadow-md shadow-amber-600/30 scale-105'
-                              : 'bg-slate-100 text-slate-600 hover:bg-amber-50 hover:text-amber-700'
-                          }`}
-                          title="Sakit"
-                        >
-                          S
-                        </button>
-
-                        {/* IZIN */}
-                        <button
-                          type="button"
-                          disabled={isLocked}
-                          onClick={() => handleStatusChange(student.id, 'I')}
-                          className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl font-black text-xs sm:text-sm transition-all flex items-center justify-center ${
-                            currentStatus === 'I'
-                              ? 'bg-sky-600 text-white shadow-md shadow-sky-600/30 scale-105'
-                              : 'bg-slate-100 text-slate-600 hover:bg-sky-50 hover:text-sky-700'
-                          }`}
-                          title="Izin"
-                        >
-                          I
-                        </button>
-
-                        {/* ALPA */}
-                        <button
-                          type="button"
-                          disabled={isLocked}
-                          onClick={() => handleStatusChange(student.id, 'A')}
-                          className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl font-black text-xs sm:text-sm transition-all flex items-center justify-center ${
-                            currentStatus === 'A'
-                              ? 'bg-rose-600 text-white shadow-md shadow-rose-600/30 scale-105'
-                              : 'bg-slate-100 text-slate-600 hover:bg-rose-50 hover:text-rose-700'
-                          }`}
-                          title="Alpa / Tanpa Keterangan"
-                        >
-                          A
-                        </button>
-                      </div>
+                      {/* Conditional Note Field if S/I/A */}
+                      {isNonPresent && (
+                        <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center gap-2">
+                          <span className="text-[10px] font-bold text-slate-500 shrink-0">
+                            Keterangan ({currentStatus}):
+                          </span>
+                          <input
+                            type="text"
+                            disabled={isLocked}
+                            value={currentNote}
+                            onChange={(e) => handleNoteChange(student.id, e.target.value)}
+                            placeholder={
+                              currentStatus === 'S'
+                                ? 'Contoh: Sakit demam berdarah / ada surat dokter'
+                                : currentStatus === 'I'
+                                ? 'Contoh: Acara keluarga di luar kota'
+                                : 'Contoh: Tidak ada kabar dari orang tua'
+                            }
+                            className="flex-1 px-3 py-1.5 rounded-lg border border-slate-300 text-xs focus:outline-none focus:ring-1 focus:ring-blue-600"
+                          />
+                        </div>
+                      )}
                     </div>
-
-                    {/* Conditional Note Field if S/I/A */}
-                    {isNonPresent && (
-                      <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center gap-2">
-                        <span className="text-[10px] font-bold text-slate-500 shrink-0">
-                          Keterangan ({currentStatus}):
-                        </span>
-                        <input
-                          type="text"
-                          disabled={isLocked}
-                          value={currentNote}
-                          onChange={(e) => handleNoteChange(student.id, e.target.value)}
-                          placeholder={
-                            currentStatus === 'S'
-                              ? 'Contoh: Sakit demam berdarah / ada surat dokter'
-                              : currentStatus === 'I'
-                              ? 'Contoh: Acara keluarga di luar kota'
-                              : 'Contoh: Tidak ada kabar dari orang tua'
-                          }
-                          className="flex-1 px-3 py-1.5 rounded-lg border border-slate-300 text-xs focus:outline-none focus:ring-1 focus:ring-blue-600"
-                        />
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* SECTION 3: Kondisi Kebersihan & Kegiatan Piket */}
@@ -701,9 +997,13 @@ export const FormLaporanPiket: React.FC<FormLaporanPiketProps> = ({
                 <button
                   type="button"
                   id="btn-save-draft"
-                  disabled={isSubmitting}
+                  disabled={isFormDisabled}
                   onClick={() => handleSave(false)}
-                  className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold border border-slate-300 transition"
+                  className={`flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-xs font-bold border transition ${
+                    isFormDisabled
+                      ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                      : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300'
+                  }`}
                 >
                   <Save className="w-4 h-4 text-slate-600" />
                   <span>Simpan Draf</span>
@@ -712,12 +1012,26 @@ export const FormLaporanPiket: React.FC<FormLaporanPiketProps> = ({
                 <button
                   type="button"
                   id="btn-submit-report"
-                  disabled={isSubmitting}
+                  disabled={isFormDisabled}
                   onClick={() => handleSave(true)}
-                  className="flex items-center gap-1.5 px-6 py-2.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs font-extrabold shadow-md shadow-blue-700/20 transition"
+                  className={`flex items-center gap-1.5 px-6 py-2.5 rounded-xl text-white text-xs font-extrabold shadow-md transition ${
+                    isFormDisabled
+                      ? 'bg-blue-300 shadow-none cursor-not-allowed'
+                      : 'bg-blue-700 hover:bg-blue-800 shadow-blue-700/20'
+                  }`}
                 >
-                  <Send className="w-4 h-4" />
-                  <span>{isSubmitting ? 'Mengirim...' : 'Kirim Laporan Piket'}</span>
+                  {isSubmitting ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Send className="w-4 h-4" />
+                  )}
+                  <span>
+                    {isSubmitting
+                      ? 'Mengirim...'
+                      : isTeacherLoading
+                      ? 'Memuat Profil...'
+                      : 'Kirim Laporan Piket'}
+                  </span>
                 </button>
               </>
             )}

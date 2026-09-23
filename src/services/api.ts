@@ -152,28 +152,66 @@ export const api = {
   },
 
   async getMe(): Promise<{ user: User & { teacher?: Teacher; assigned_class?: SchoolClass } }> {
-    const stored = getCurrentStoredUser();
+    let authData = getCurrentAuthData();
+    let stored = getCurrentStoredUser();
     if (!stored) {
       throw new Error('Sesi tidak ditemukan.');
     }
 
-    try {
-      const authDataStr = localStorage.getItem('piket_auth_data');
-      if (authDataStr) {
-        const parsed = JSON.parse(authDataStr);
-        return {
-          user: {
-            ...parsed.user,
-            teacher: parsed.teacher,
-            assigned_class: parsed.assigned_class,
-          },
-        };
+    let teacher = authData?.teacher;
+    let assigned_class = authData?.assigned_class;
+
+    // If role is guru and teacher or class is missing, resolve directly from Firestore
+    if (stored.role === 'guru' && (!teacher || !assigned_class)) {
+      try {
+        const teachersRes = await firestoreService.getTeachers();
+        const foundTeacher = teachersRes.teachers.find(
+          (t) =>
+            t.user_id === stored?.id ||
+            t.id === stored?.teacher_id ||
+            t.id === (stored as any)?.teacherId ||
+            (stored?.email && t.email === stored.email) ||
+            (stored?.name && t.name.toLowerCase() === stored.name.toLowerCase())
+        );
+
+        if (foundTeacher) {
+          teacher = foundTeacher;
+          if (foundTeacher.class_id) {
+            const classesRes = await firestoreService.getClasses();
+            const foundClass = classesRes.classes.find((c) => c.id === foundTeacher.class_id);
+            if (foundClass) {
+              assigned_class = foundClass;
+            }
+          }
+
+          // Update cache
+          const token = inMemoryToken || getApiToken() || '';
+          inMemoryAuthData = {
+            token,
+            user: { ...stored, teacher_id: foundTeacher.id, teacherId: foundTeacher.id },
+            teacher,
+            assigned_class,
+          };
+          try {
+            if (typeof localStorage !== 'undefined') {
+              localStorage.setItem('piket_auth_data', JSON.stringify(inMemoryAuthData));
+            }
+          } catch (e) {
+            // ignore
+          }
+        }
+      } catch (err) {
+        console.warn('Error resolving teacher in getMe:', err);
       }
-    } catch (e) {
-      // ignore
     }
 
-    return { user: stored };
+    return {
+      user: {
+        ...stored,
+        teacher,
+        assigned_class,
+      },
+    };
   },
 
   async updateProfile(payload: { name?: string; phone?: string; email?: string }): Promise<{ message: string; user: User }> {
@@ -421,15 +459,42 @@ export const api = {
 
   async createReport(payload: Partial<DailyReport> & { attendance_items?: any[] }): Promise<{ message: string; report: DailyReport }> {
     const auth = getCurrentAuthData();
+    const currentUser = getCurrentStoredUser();
+    const finalPayload = { ...payload };
+
     if (auth?.user?.role === 'guru') {
       const allowedClassId = auth.assigned_class?.id || auth.teacher?.class_id;
-      if (payload.class_id && allowedClassId && payload.class_id !== allowedClassId) {
+      const targetClassId = finalPayload.class_id || (finalPayload as any).classId;
+      if (targetClassId && allowedClassId && targetClassId !== allowedClassId) {
         throw new Error('Akses ditolak: Anda tidak dapat membuat laporan untuk kelas lain.');
       }
+      if (!targetClassId && allowedClassId) {
+        finalPayload.class_id = allowedClassId;
+        finalPayload.classId = allowedClassId;
+      }
+      if (!finalPayload.teacher_id && !(finalPayload as any).teacherId) {
+        const tId = auth.teacher?.id || auth.user?.teacher_id || (auth.user as any)?.teacherId;
+        if (tId) {
+          finalPayload.teacher_id = tId;
+          finalPayload.teacherId = tId;
+        }
+      }
+      if (!finalPayload.teacher_name && !(finalPayload as any).teacherName) {
+        const tName = auth.teacher?.name || auth.user?.name;
+        if (tName) {
+          finalPayload.teacher_name = tName;
+          finalPayload.teacherName = tName;
+        }
+      }
     }
-    const currentUser = getCurrentStoredUser();
+
+    const effectiveTeacherId = finalPayload.teacher_id || (finalPayload as any).teacherId;
+    if (!effectiveTeacherId && currentUser?.role !== 'guru') {
+      throw new Error('Guru piket wajib ditentukan.');
+    }
+
     return firestoreService.saveDailyReport(
-      payload,
+      finalPayload,
       currentUser ? { id: currentUser.id, name: currentUser.name, role: currentUser.role } : undefined
     );
   },
@@ -440,15 +505,37 @@ export const api = {
 
   async updateReport(id: string, payload: Partial<DailyReport> & { attendance_items?: any[] }): Promise<{ message: string; report: DailyReport }> {
     const auth = getCurrentAuthData();
+    const currentUser = getCurrentStoredUser();
+    const finalPayload = { ...payload, id };
+
     if (auth?.user?.role === 'guru') {
       const allowedClassId = auth.assigned_class?.id || auth.teacher?.class_id;
-      if (payload.class_id && allowedClassId && payload.class_id !== allowedClassId) {
+      const targetClassId = finalPayload.class_id || (finalPayload as any).classId;
+      if (targetClassId && allowedClassId && targetClassId !== allowedClassId) {
         throw new Error('Akses ditolak: Anda tidak diizinkan mengubah laporan kelas lain.');
       }
+      if (!targetClassId && allowedClassId) {
+        finalPayload.class_id = allowedClassId;
+        finalPayload.classId = allowedClassId;
+      }
+      if (!finalPayload.teacher_id && !(finalPayload as any).teacherId) {
+        const tId = auth.teacher?.id || auth.user?.teacher_id || (auth.user as any)?.teacherId;
+        if (tId) {
+          finalPayload.teacher_id = tId;
+          finalPayload.teacherId = tId;
+        }
+      }
+      if (!finalPayload.teacher_name && !(finalPayload as any).teacherName) {
+        const tName = auth.teacher?.name || auth.user?.name;
+        if (tName) {
+          finalPayload.teacher_name = tName;
+          finalPayload.teacherName = tName;
+        }
+      }
     }
-    const currentUser = getCurrentStoredUser();
+
     return firestoreService.saveDailyReport(
-      { ...payload, id },
+      finalPayload,
       currentUser ? { id: currentUser.id, name: currentUser.name, role: currentUser.role } : undefined
     );
   },

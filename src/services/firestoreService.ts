@@ -173,6 +173,8 @@ export async function ensureFirestoreSeeded(): Promise<void> {
           email: `${t.username}@sdnoehendak.sch.id`,
           password: guruHash,
           role: 'guru',
+          teacher_id: t.teacherId,
+          teacherId: t.teacherId,
           status: 'active',
           created_at: now,
           updated_at: now,
@@ -1234,8 +1236,6 @@ export async function saveDailyReport(
     const {
       id: providedId,
       date,
-      class_id,
-      teacher_id,
       cleanliness_status,
       activity_notes,
       incident_notes,
@@ -1244,21 +1244,58 @@ export async function saveDailyReport(
       attendance_items = [],
     } = payload;
 
-    if (!date) throw new Error('Tanggal laporan wajib diisi.');
-    if (!class_id) throw new Error('Kelas wajib dipilih.');
-    if (!teacher_id) throw new Error('Guru piket wajib ditentukan.');
+    const rawClassId = payload.class_id || (payload as any).classId || '';
+    const effectiveClassId = String(rawClassId).trim();
 
-    // Unique logical key: `${date}_${class_id}`
-    const reportId = providedId || `rep_${date}_${class_id}`;
+    let rawTeacherId = payload.teacher_id || (payload as any).teacherId || '';
+    let effectiveTeacherId = String(rawTeacherId).trim();
+    let effectiveTeacherName = String(payload.teacher_name || (payload as any).teacherName || '').trim();
+
+    // If teacher_id not provided but current user is a guru, resolve directly from user or teacher doc
+    if (!effectiveTeacherId && currentUser) {
+      if (currentUser.role === 'guru') {
+        try {
+          const uSnap = await getDoc(doc(db, 'users', currentUser.id));
+          if (uSnap.exists()) {
+            const uData = uSnap.data();
+            if (uData.teacher_id || uData.teacherId) {
+              effectiveTeacherId = String(uData.teacher_id || uData.teacherId).trim();
+            }
+          }
+          if (!effectiveTeacherId) {
+            const tSnap = await getDocs(
+              query(collection(db, 'teachers'), where('user_id', '==', currentUser.id))
+            );
+            if (!tSnap.empty) {
+              effectiveTeacherId = tSnap.docs[0].id;
+              effectiveTeacherName = effectiveTeacherName || tSnap.docs[0].data().name;
+            }
+          }
+        } catch (e) {
+          // fallback
+        }
+      }
+    }
+
+    if (!date) throw new Error('Tanggal laporan wajib diisi.');
+    if (!effectiveClassId) throw new Error('Kelas wajib dipilih.');
+    if (!effectiveTeacherId) throw new Error('Guru piket wajib ditentukan.');
+
+    // Unique logical key: `${date}_${effectiveClassId}`
+    const reportId = providedId || `rep_${date}_${effectiveClassId}`;
     const now = new Date().toISOString();
 
     // Check if class and teacher exist
     const [cSnap, tSnap] = await Promise.all([
-      getDoc(doc(db, 'classes', class_id)),
-      getDoc(doc(db, 'teachers', teacher_id)),
+      getDoc(doc(db, 'classes', effectiveClassId)),
+      getDoc(doc(db, 'teachers', effectiveTeacherId)),
     ]);
-    const className = cSnap.exists() ? (cSnap.data() as SchoolClass).class_name : 'Kelas';
-    const teacherName = tSnap.exists() ? (tSnap.data() as Teacher).name : 'Guru';
+    const className = cSnap.exists()
+      ? (cSnap.data() as SchoolClass).class_name
+      : (payload.class_name || (payload as any).className || 'Kelas');
+    const teacherName = tSnap.exists()
+      ? (tSnap.data() as Teacher).name
+      : (effectiveTeacherName || payload.teacher_name || (payload as any).teacherName || 'Guru');
 
     // Calculate counts from attendance_items
     let presentCount = 0;
@@ -1277,20 +1314,31 @@ export async function saveDailyReport(
     const totalStudents = attendance_items.length;
     const percentage = totalStudents > 0 ? Math.round((presentCount / totalStudents) * 100) : 0;
 
-    const reportData: DailyReport = {
+    const reportData: DailyReport & any = {
       id: reportId,
       date,
       day_name: getIndonesianDayName(date),
-      class_id,
+      class_id: effectiveClassId,
+      classId: effectiveClassId,
       class_name: className,
-      teacher_id,
+      className: className,
+      teacher_id: effectiveTeacherId,
+      teacherId: effectiveTeacherId,
       teacher_name: teacherName,
+      teacherName: teacherName,
+      created_by: currentUser?.id || (payload as any).created_by || (payload as any).createdBy || effectiveTeacherId,
+      createdBy: currentUser?.id || (payload as any).created_by || (payload as any).createdBy || effectiveTeacherId,
       semester: payload.semester || 'Ganjil',
-      academic_year: payload.academic_year || '2026/2027',
-      cleanliness_status: cleanliness_status || 'Baik',
-      activity_notes: Array.isArray(activity_notes) ? activity_notes : [],
-      incident_notes: incident_notes || '',
-      follow_up: follow_up || '',
+      academic_year: payload.academic_year || (payload as any).academicYear || '2026/2027',
+      academicYear: payload.academic_year || (payload as any).academicYear || '2026/2027',
+      cleanliness_status: cleanliness_status || (payload as any).cleanlinessStatus || 'Baik',
+      cleanlinessStatus: cleanliness_status || (payload as any).cleanlinessStatus || 'Baik',
+      activity_notes: Array.isArray(activity_notes) ? activity_notes : (payload as any).activityNotes || [],
+      activityNotes: Array.isArray(activity_notes) ? activity_notes : (payload as any).activityNotes || [],
+      incident_notes: incident_notes || (payload as any).incidentNotes || '',
+      incidentNotes: incident_notes || (payload as any).incidentNotes || '',
+      follow_up: follow_up || (payload as any).followUp || '',
+      followUp: follow_up || (payload as any).followUp || '',
       status: (status as ReportStatus) || 'submitted',
       total_students: totalStudents,
       present_count: presentCount,
@@ -1299,7 +1347,10 @@ export async function saveDailyReport(
       absent_count: absentCount,
       attendance_percentage: percentage,
       submitted_at: now,
+      created_at: payload.created_at || (payload as any).createdAt || now,
+      createdAt: payload.created_at || (payload as any).createdAt || now,
       updated_at: now,
+      updatedAt: now,
     };
 
     // ATOMIC BATCH WRITE: Report + All Attendance Records
@@ -1734,10 +1785,60 @@ export async function loginUser(
   let assignedClassRecord: SchoolClass | undefined = undefined;
 
   if (targetUser.role === 'guru') {
+    // 1. Try finding teacher where user_id == targetUser.id
     const tQuery = query(collection(db, 'teachers'), where('user_id', '==', targetUser.id));
     const tSnap = await getDocs(tQuery);
     if (!tSnap.empty) {
       teacherRecord = tSnap.docs[0].data() as Teacher;
+    } else {
+      // 2. Try by teacher_id stored in user doc
+      const userTeacherId = targetUser.teacher_id || (targetUser as any).teacherId;
+      if (userTeacherId) {
+        const directSnap = await getDoc(doc(db, 'teachers', userTeacherId));
+        if (directSnap.exists()) {
+          teacherRecord = directSnap.data() as Teacher;
+        }
+      }
+    }
+
+    // 3. Fallback: match by name or email
+    if (!teacherRecord) {
+      const allTeachersSnap = await getDocs(collection(db, 'teachers'));
+      const allTeachers = allTeachersSnap.docs.map((d) => d.data() as Teacher);
+      teacherRecord = allTeachers.find(
+        (t) =>
+          t.user_id === targetUser?.id ||
+          (targetUser?.email && t.email === targetUser.email) ||
+          (targetUser?.name && t.name.toLowerCase() === targetUser.name.toLowerCase())
+      );
+    }
+
+    // If teacher found, ensure reciprocal links are updated in Firestore
+    if (teacherRecord) {
+      if (teacherRecord.user_id !== targetUser.id) {
+        try {
+          await updateDoc(doc(db, 'teachers', teacherRecord.id), {
+            user_id: targetUser.id,
+            updated_at: new Date().toISOString(),
+          });
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      if (!targetUser.teacher_id || targetUser.teacher_id !== teacherRecord.id) {
+        try {
+          await updateDoc(doc(db, 'users', targetUser.id), {
+            teacher_id: teacherRecord.id,
+            teacherId: teacherRecord.id,
+            updated_at: new Date().toISOString(),
+          });
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      // Load assigned class
       if (teacherRecord.class_id) {
         const cSnap = await getDoc(doc(db, 'classes', teacherRecord.class_id));
         if (cSnap.exists()) {
@@ -1748,7 +1849,14 @@ export async function loginUser(
   }
 
   const token = `firestore_token_${targetUser.id}_${Date.now()}`;
-  const userSafe: User = { ...targetUser, password: '' };
+  const userSafe: User = {
+    ...targetUser,
+    teacher_id: teacherRecord?.id || targetUser.teacher_id,
+    teacherId: teacherRecord?.id || (targetUser as any).teacherId,
+    teacher: teacherRecord,
+    assigned_class: assignedClassRecord,
+    password: '',
+  };
 
   await logAudit(
     targetUser.id,

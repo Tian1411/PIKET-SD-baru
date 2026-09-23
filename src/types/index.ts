@@ -12,9 +12,13 @@ export interface User {
   email: string;
   password?: string;
   role: UserRole;
+  teacher_id?: string;
+  teacherId?: string;
   status: UserStatus;
   created_at: string;
   updated_at: string;
+  teacher?: any;
+  assigned_class?: any;
 }
 
 export interface Teacher {
@@ -73,17 +77,28 @@ export interface AttendanceRecord {
 export interface DailyReport {
   id: string;
   date: string; // YYYY-MM-DD
-  day_name: string; // Senin, Selasa, dll
+  day_name?: string; // Senin, Selasa, dll
   class_id: string;
+  classId?: string;
   class_name?: string;
+  className?: string;
   teacher_id: string;
+  teacherId?: string;
   teacher_name?: string;
+  teacherName?: string;
+  created_by?: string;
+  createdBy?: string;
   semester: string; // 'Ganjil' | 'Genap'
   academic_year: string; // '2026/2027'
+  academicYear?: string;
   cleanliness_status: CleanlinessStatus;
+  cleanlinessStatus?: CleanlinessStatus;
   activity_notes: string[]; // ['Menyapu kelas', 'Membersihkan papan tulis', ...]
+  activityNotes?: string[];
   incident_notes: string;
+  incidentNotes?: string;
   follow_up: string;
+  followUp?: string;
   status: ReportStatus;
   total_students: number;
   present_count: number; // H
@@ -92,7 +107,10 @@ export interface DailyReport {
   absent_count: number; // A
   attendance_percentage?: number;
   submitted_at?: string;
+  created_at?: string;
+  createdAt?: string;
   updated_at: string;
+  updatedAt?: string;
   locked_at?: string;
   locked_by?: string;
   attendance?: AttendanceRecord[];

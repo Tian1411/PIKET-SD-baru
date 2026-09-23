@@ -91,6 +91,20 @@ const MainLayout: React.FC = () => {
               <AdminDashboard
                 onViewReport={handleViewReport}
                 onNavigateToRekap={() => setCurrentView('rekap')}
+                onNavigateToForm={handleOpenForm}
+              />
+            )}
+            {currentView === 'form' && (
+              <FormLaporanPiket
+                initialReportId={editingReportId}
+                onSuccess={() => {
+                  setCurrentView('dashboard');
+                  setEditingReportId(undefined);
+                }}
+                onCancel={() => {
+                  setCurrentView('dashboard');
+                  setEditingReportId(undefined);
+                }}
               />
             )}
             {currentView === 'rekap' && (

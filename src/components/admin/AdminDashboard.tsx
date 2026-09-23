@@ -15,16 +15,19 @@ import {
   Calendar,
   Sparkles,
   RefreshCw,
+  FilePlus,
 } from 'lucide-react';
 
 interface AdminDashboardProps {
   onViewReport: (reportId: string) => void;
   onNavigateToRekap: () => void;
+  onNavigateToForm?: () => void;
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onViewReport,
   onNavigateToRekap,
+  onNavigateToForm,
 }) => {
   const [stats, setStats] = useState<DashboardAdminStats | null>(null);
   const [selectedDate, setSelectedDate] = useState<string>(
@@ -81,6 +84,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </div>
 
         <div className="flex items-center gap-2.5 flex-wrap">
+          {onNavigateToForm && (
+            <button
+              id="btn-admin-create-report"
+              onClick={onNavigateToForm}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold shadow-xs transition"
+            >
+              <FilePlus className="w-3.5 h-3.5" />
+              <span>Buat Laporan</span>
+            </button>
+          )}
+
           <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl">
             <Calendar className="w-4 h-4 text-blue-600" />
             <input

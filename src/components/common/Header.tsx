@@ -169,6 +169,18 @@ export const Header: React.FC<HeaderProps> = ({
                   </button>
 
                   <button
+                    onClick={() => onSelectTab('form')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition whitespace-nowrap ${
+                      activeTab === 'form'
+                        ? 'bg-blue-700 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                    }`}
+                  >
+                    <FilePlus className="w-3.5 h-3.5" />
+                    <span>Buat Laporan</span>
+                  </button>
+
+                  <button
                     onClick={() => onSelectTab('rekap')}
                     className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition whitespace-nowrap ${
                       activeTab === 'rekap'
