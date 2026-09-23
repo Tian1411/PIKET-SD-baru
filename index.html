@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // 1. Mock Vite HMR WebSocket in sandboxed iframe environment
+      (function() {
+        if (typeof window === 'undefined') return;
+
+        var OriginalWebSocket = window.WebSocket;
+        window.WebSocket = function(url, protocols) {
+          if (
+            protocols === 'vite-hmr' ||
+            (typeof url === 'string' && (url.indexOf('localhost') !== -1 || url.indexOf('run.app') !== -1))
+          ) {
+            var target = new EventTarget();
+            target.url = url;
+            target.readyState = 1; // WebSocket.OPEN
+            target.protocol = protocols || '';
+            target.extensions = '';
+            target.bufferedAmount = 0;
+            target.binaryType = 'blob';
+            target.send = function() {};
+            target.close = function(code, reason) {
+              target.readyState = 3;
+              var ev = new Event('close');
+              ev.code = code || 1000;
+              ev.reason = reason || '';
+              ev.wasClean = true;
+              if (typeof target.onclose === 'function') target.onclose(ev);
+              target.dispatchEvent(ev);
+            };
+
+            setTimeout(function() {
+              var ev = new Event('open');
+              if (typeof target.onopen === 'function') target.onopen(ev);
+              target.dispatchEvent(ev);
+            }, 10);
+
+            return target;
+          }
+          return new OriginalWebSocket(url, protocols);
+        };
+        if (OriginalWebSocket) {
+          window.WebSocket.prototype = OriginalWebSocket.prototype;
+        }
+        window.WebSocket.CONNECTING = 0;
+        window.WebSocket.OPEN = 1;
+        window.WebSocket.CLOSING = 2;
+        window.WebSocket.CLOSED = 3;
+
+        // 2. Suppress benign Vite WebSocket error logs & unhandled rejections
+        var origError = console.error;
+        console.error = function() {
+          var args = Array.prototype.slice.call(arguments);
+          var joined = args.map(function(a) { return (a && (a.message || a.stack || String(a))) || ''; }).join(' ');
+          if (
+            joined.indexOf('failed to connect to websocket') !== -1 ||
+            joined.indexOf('WebSocket closed without opened') !== -1 ||
+            joined.indexOf('[vite] failed') !== -1
+          ) {
+            return;
+          }
+          return origError.apply(console, args);
+        };
+
+        var origWarn = console.warn;
+        console.warn = function() {
+          var args = Array.prototype.slice.call(arguments);
+          var joined = args.map(function(a) { return (a && (a.message || a.stack || String(a))) || ''; }).join(' ');
+          if (
+            joined.indexOf('failed to connect to websocket') !== -1 ||
+            joined.indexOf('WebSocket closed without opened') !== -1 ||
+            joined.indexOf('[vite] failed') !== -1
+          ) {
+            return;
+          }
+          return origWarn.apply(console, args);
+        };
+
+        window.addEventListener('unhandledrejection', function (event) {
+          var reason = event.reason;
+          var msg = (reason && (reason.message || reason.description || reason)) || '';
+          if (typeof msg === 'string' && (msg.indexOf('WebSocket') !== -1 || msg.indexOf('websocket') !== -1)) {
+            event.preventDefault();
+            if (typeof event.stopImmediatePropagation === 'function') {
+              event.stopImmediatePropagation();
+            }
+          }
+        });
+
+        window.addEventListener('error', function (event) {
+          var msg = (event.message || '') + '';
+          if (msg.indexOf('WebSocket') !== -1 || msg.indexOf('websocket') !== -1) {
+            event.preventDefault();
+            if (typeof event.stopImmediatePropagation === 'function') {
+              event.stopImmediatePropagation();
+            }
+          }
+        });
+
+        // 3. Remove Vite error overlay if it displays for websocket
+        if (typeof MutationObserver !== 'undefined') {
+          var observer = new MutationObserver(function(mutations) {
+            mutations.forEach(function(m) {
+              m.addedNodes.forEach(function(node) {
+                if (node.tagName && node.tagName.toLowerCase() === 'vite-error-overlay') {
+                  node.remove();
+                }
+              });
+            });
+          });
+          if (document.documentElement) {
+            observer.observe(document.documentElement, { childList: true, subtree: true });
+          }
+        }
+      })();
+    </script>
+    <title>Sistem Laporan Piket Harian SD - UPTD SDN Oehendak</title>
+    <meta name="description" content="Sistem pelaporan piket harian dan presensi kehadiran siswa sekolah dasar UPTD SD Negeri Oehendak dengan role Guru dan Admin." />
+    <meta property="og:title" content="Sistem Laporan Piket Harian SD - UPTD SDN Oehendak" />
+    <meta property="og:description" content="Sistem pelaporan piket harian dan presensi kehadiran siswa sekolah dasar UPTD SD Negeri Oehendak dengan role Guru dan Admin." />
+    <meta property="og:type" content="website" />
+    <meta name="theme-color" content="#1e40af" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Piket SD" />
+    <link rel="icon" type="image/png" href="/school-logo.png" />
+    <link rel="apple-touch-icon" href="/school-logo.png" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+  </head>
+  <body class="bg-slate-50 text-slate-900 antialiased font-sans">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

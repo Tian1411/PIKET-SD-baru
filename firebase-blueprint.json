@@ -1,0 +1,196 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Akun pengguna sistem laporan piket (Admin dan Guru)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "username": { "type": "string", "maxLength": 50 },
+        "email": { "type": "string", "maxLength": 100 },
+        "role": { "type": "string", "enum": ["admin", "guru"] },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "teacherId": { "type": "string" },
+        "classId": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "name", "username", "email", "role", "status"]
+    },
+    "Teacher": {
+      "title": "Teacher",
+      "description": "Profil guru dan penugasan kelas piket",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "nip": { "type": "string", "maxLength": 30 },
+        "email": { "type": "string", "maxLength": 100 },
+        "phone": { "type": "string", "maxLength": 25 },
+        "classId": { "type": "string" },
+        "className": { "type": "string", "maxLength": 50 },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "name", "status"]
+    },
+    "SchoolClass": {
+      "title": "SchoolClass",
+      "description": "Data kelas sekolah dasar",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "className": { "type": "string", "maxLength": 50 },
+        "grade": { "type": "number" },
+        "academicYear": { "type": "string", "maxLength": 20 },
+        "semester": { "type": "string", "maxLength": 20 },
+        "teacherId": { "type": "string" },
+        "teacherName": { "type": "string", "maxLength": 100 },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "className", "grade", "status"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "Data siswa sekolah dasar",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "nis": { "type": "string", "maxLength": 30 },
+        "nisn": { "type": "string", "maxLength": 30 },
+        "name": { "type": "string", "maxLength": 100 },
+        "gender": { "type": "string", "enum": ["L", "P"] },
+        "classId": { "type": "string" },
+        "className": { "type": "string", "maxLength": 50 },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "nis", "name", "gender", "classId", "status"]
+    },
+    "DailyReport": {
+      "title": "DailyReport",
+      "description": "Laporan piket harian kelas",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string", "maxLength": 10 },
+        "dayName": { "type": "string", "maxLength": 20 },
+        "classId": { "type": "string" },
+        "className": { "type": "string", "maxLength": 50 },
+        "teacherId": { "type": "string" },
+        "teacherName": { "type": "string", "maxLength": 100 },
+        "semester": { "type": "string", "maxLength": 20 },
+        "academicYear": { "type": "string", "maxLength": 20 },
+        "cleanlinessStatus": { "type": "string", "maxLength": 30 },
+        "activityNotes": { "type": "array" },
+        "incidentNotes": { "type": "string", "maxLength": 1000 },
+        "followUp": { "type": "string", "maxLength": 1000 },
+        "status": { "type": "string", "enum": ["draft", "submitted", "locked", "reopened"] },
+        "totalStudents": { "type": "number" },
+        "presentCount": { "type": "number" },
+        "sickCount": { "type": "number" },
+        "permitCount": { "type": "number" },
+        "absentCount": { "type": "number" },
+        "submittedAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "lockedAt": { "type": "string" },
+        "lockedBy": { "type": "string" }
+      },
+      "required": ["id", "date", "classId", "teacherId", "status"]
+    },
+    "AttendanceRecord": {
+      "title": "AttendanceRecord",
+      "description": "Data presensi kehadiran per siswa dalam laporan piket",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "reportId": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string", "maxLength": 100 },
+        "status": { "type": "string", "enum": ["H", "S", "I", "A"] },
+        "note": { "type": "string", "maxLength": 255 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "reportId", "studentId", "status"]
+    },
+    "SchoolSettings": {
+      "title": "SchoolSettings",
+      "description": "Pengaturan identitas resmi sekolah",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "school_name": { "type": "string", "maxLength": 150 },
+        "npsn": { "type": "string", "maxLength": 30 },
+        "address": { "type": "string", "maxLength": 255 },
+        "email": { "type": "string", "maxLength": 100 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "principal_name": { "type": "string", "maxLength": 100 },
+        "principal_nip": { "type": "string", "maxLength": 30 },
+        "academic_year": { "type": "string", "maxLength": 20 },
+        "semester": { "type": "string", "maxLength": 20 },
+        "logo_url": { "type": "string", "maxLength": 500 },
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" }
+      },
+      "required": ["id", "school_name"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Catatan riwayat audit aktivitas penting",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string", "maxLength": 100 },
+        "role": { "type": "string", "enum": ["admin", "guru"] },
+        "action": { "type": "string", "maxLength": 50 },
+        "tableName": { "type": "string", "maxLength": 50 },
+        "recordId": { "type": "string" },
+        "description": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "action", "description"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Data akun pengguna"
+    },
+    "/teachers/{teacherId}": {
+      "schema": "Teacher",
+      "description": "Data profil guru"
+    },
+    "/classes/{classId}": {
+      "schema": "SchoolClass",
+      "description": "Data kelas"
+    },
+    "/students/{studentId}": {
+      "schema": "Student",
+      "description": "Data siswa sekolah dasar"
+    },
+    "/daily_reports/{reportId}": {
+      "schema": "DailyReport",
+      "description": "Laporan piket harian kelas"
+    },
+    "/attendance/{attendanceId}": {
+      "schema": "AttendanceRecord",
+      "description": "Data kehadiran siswa"
+    },
+    "/school_settings/{settingId}": {
+      "schema": "SchoolSettings",
+      "description": "Identitas resmi sekolah"
+    },
+    "/audit_logs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Log aktivitas sistem"
+    }
+  }
+}

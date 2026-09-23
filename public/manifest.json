@@ -1,0 +1,25 @@
+{
+  "id": "/",
+  "name": "Sistem Laporan Piket Harian SD",
+  "short_name": "Piket SD",
+  "description": "Aplikasi Piket Harian dan Presensi Siswa UPTD SD Negeri Oehendak",
+  "theme_color": "#1e40af",
+  "background_color": "#f8fafc",
+  "display": "standalone",
+  "start_url": "/",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Sistem Laporan Piket Harian SD",
+  "description": "Sistem pelaporan piket harian dan presensi kehadiran siswa sekolah dasar UPTD SD Negeri Oehendak dengan role Guru dan Admin.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
