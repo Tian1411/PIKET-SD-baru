@@ -19,7 +19,6 @@ import { RekapLaporan } from './components/admin/RekapLaporan';
 import { MasterKelas } from './components/admin/MasterKelas';
 import { MasterGuru } from './components/admin/MasterGuru';
 import { MasterSiswa } from './components/admin/MasterSiswa';
-import { PenugasanKoordinator } from './components/admin/PenugasanKoordinator';
 import { PengaturanSekolah } from './components/admin/PengaturanSekolah';
 import { AuditLogView } from './components/admin/AuditLogView';
 
@@ -93,7 +92,6 @@ const MainLayout: React.FC = () => {
                 onViewReport={handleViewReport}
                 onNavigateToRekap={() => setCurrentView('rekap')}
                 onNavigateToForm={handleOpenForm}
-                onNavigateToCoordinators={() => setCurrentView('coordinators')}
               />
             )}
             {currentView === 'form' && (
@@ -113,9 +111,10 @@ const MainLayout: React.FC = () => {
               <RekapLaporan onViewReport={handleViewReport} />
             )}
             {currentView === 'classes' && <MasterKelas />}
-            {currentView === 'teachers' && <MasterGuru />}
+            {currentView === 'teachers' && (
+              <MasterGuru onNavigateToClasses={() => setCurrentView('classes')} />
+            )}
             {currentView === 'students' && <MasterSiswa />}
-            {currentView === 'coordinators' && <PenugasanKoordinator />}
             {currentView === 'settings' && <PengaturanSekolah />}
             {currentView === 'logs' && <AuditLogView />}
           </>

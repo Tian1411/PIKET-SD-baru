@@ -9,7 +9,6 @@ import {
   DashboardGuruStats,
   SchoolSettings,
   AuditLog,
-  DutyCoordinator,
 } from '../types';
 import * as firestoreService from './firestoreService';
 
@@ -297,6 +296,15 @@ export const api = {
     return firestoreService.getTeachers();
   },
 
+  async getTeacherAssignments(params?: {
+    teacher_id?: string;
+    class_id?: string;
+    academic_year?: string;
+    status?: 'active' | 'inactive';
+  }): Promise<{ assignments: any[] }> {
+    return firestoreService.getTeacherAssignments(params);
+  },
+
   async createTeacher(payload: any): Promise<{ message: string; teacher: Teacher }> {
     const currentUser = getCurrentStoredUser();
     if (!currentUser || currentUser.role !== 'admin') {
@@ -327,50 +335,6 @@ export const api = {
     }
     return firestoreService.deleteTeacher(
       id,
-      { id: currentUser.id, name: currentUser.name, role: currentUser.role }
-    );
-  },
-
-  // ---------------- DUTY COORDINATORS (KOORDINATOR PIKET) ----------------
-  async getDutyCoordinators(): Promise<{ coordinators: DutyCoordinator[] }> {
-    return firestoreService.getDutyCoordinators();
-  },
-
-  async getActiveDutyCoordinator(forDate?: string): Promise<DutyCoordinator | null> {
-    return firestoreService.getActiveDutyCoordinator(forDate);
-  },
-
-  async createDutyCoordinator(payload: Partial<DutyCoordinator>): Promise<{ message: string; coordinator: DutyCoordinator }> {
-    const currentUser = getCurrentStoredUser();
-    if (!currentUser || currentUser.role !== 'admin') {
-      throw new Error('Akses ditolak: Hanya Administrator yang berwenang menugaskan Koordinator Piket.');
-    }
-    return firestoreService.createDutyCoordinator(
-      payload,
-      { id: currentUser.id, name: currentUser.name, role: currentUser.role }
-    );
-  },
-
-  async updateDutyCoordinator(id: string, payload: Partial<DutyCoordinator>): Promise<{ message: string; coordinator: DutyCoordinator }> {
-    const currentUser = getCurrentStoredUser();
-    if (!currentUser || currentUser.role !== 'admin') {
-      throw new Error('Akses ditolak: Hanya Administrator yang berwenang mengubah Koordinator Piket.');
-    }
-    return firestoreService.updateDutyCoordinator(
-      id,
-      payload,
-      { id: currentUser.id, name: currentUser.name, role: currentUser.role }
-    );
-  },
-
-  async toggleDutyCoordinatorStatus(id: string, newStatus: 'active' | 'inactive'): Promise<{ message: string }> {
-    const currentUser = getCurrentStoredUser();
-    if (!currentUser || currentUser.role !== 'admin') {
-      throw new Error('Akses ditolak: Hanya Administrator yang berwenang mengubah status Koordinator Piket.');
-    }
-    return firestoreService.toggleDutyCoordinatorStatus(
-      id,
-      newStatus,
       { id: currentUser.id, name: currentUser.name, role: currentUser.role }
     );
   },
@@ -434,17 +398,6 @@ export const api = {
     }
     return firestoreService.deleteStudent(
       id,
-      { id: currentUser.id, name: currentUser.name, role: currentUser.role }
-    );
-  },
-
-  async bulkDeleteStudentsByClass(classId: string): Promise<{ message: string; total: number; affectedCount: number; failedCount: number }> {
-    const currentUser = getCurrentStoredUser();
-    if (!currentUser || currentUser.role !== 'admin') {
-      throw new Error('Akses ditolak: Hanya Administrator yang berwenang menghapus seluruh data siswa per kelas.');
-    }
-    return firestoreService.bulkDeleteStudentsByClass(
-      classId,
       { id: currentUser.id, name: currentUser.name, role: currentUser.role }
     );
   },

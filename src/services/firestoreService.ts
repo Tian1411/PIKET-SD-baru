@@ -17,13 +17,13 @@ import { db, handleFirestoreError, OperationType } from '../firebase';
 import {
   User,
   Teacher,
+  TeacherAssignment,
   SchoolClass,
   Student,
   DailyReport,
   AttendanceRecord,
   SchoolSettings,
   AuditLog,
-  DutyCoordinator,
   DashboardAdminStats,
   DashboardGuruStats,
   AttendanceStatus,
@@ -31,6 +31,52 @@ import {
 } from '../types';
 import bcrypt from 'bcryptjs';
 import { extractFieldsFromRow, normalizeGender, matchClass } from '../utils/excelImport';
+
+export function extractGradeAndSection(
+  className: string,
+  currentGrade?: number
+): { grade: number; section: string } {
+  let grade = currentGrade || 1;
+  const clean = (className || '').trim();
+  const romanMap: Record<string, number> = { I: 1, II: 2, III: 3, IV: 4, V: 5, VI: 6 };
+
+  const matchGrade = clean.match(/^(?:kelas\s*)?(VI|IV|V|III|II|I|[1-6])\b/i);
+  if (matchGrade) {
+    const rawG = matchGrade[1].toUpperCase();
+    if (romanMap[rawG]) {
+      grade = romanMap[rawG];
+    } else if (!isNaN(parseInt(rawG, 10))) {
+      grade = parseInt(rawG, 10);
+    }
+  }
+
+  const matchSection =
+    clean.match(/(?:^|\s|-|\/)([A-Za-z])(?:\s|$)/i) ||
+    clean.match(/[0-6IViv]+[\s\-_]*([A-Za-z])\b/i);
+  const section = matchSection ? matchSection[1].toUpperCase() : '';
+
+  return { grade, section };
+}
+
+/**
+ * Recursively removes all keys with `undefined` values from an object or array.
+ * This guarantees no Firestore operations fail due to "Unsupported field value: undefined".
+ */
+export function cleanFirestoreData<T>(obj: T): T {
+  if (obj === null || obj === undefined || typeof obj !== 'object') {
+    return obj;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map((item) => cleanFirestoreData(item)) as any;
+  }
+  const cleaned: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      cleaned[key] = typeof value === 'object' && value !== null ? cleanFirestoreData(value) : value;
+    }
+  }
+  return cleaned as T;
+}
 
 const DEFAULT_SETTINGS: SchoolSettings = {
   id: 'default',
@@ -268,6 +314,65 @@ export async function ensureFirestoreSeeded(): Promise<void> {
       await batch.commit();
       console.log('[Firestore] Seeding finished successfully.');
     }
+
+    // Ensure teacher_assignments exist for active teachers
+    try {
+      const asgnSnap = await getDocs(query(collection(db, 'teacher_assignments'), limit(1)));
+      if (asgnSnap.empty) {
+        const [teachersSnap, classesSnap] = await Promise.all([
+          getDocs(collection(db, 'teachers')),
+          getDocs(collection(db, 'classes')),
+        ]);
+        const classesMap = new Map<string, SchoolClass>();
+        classesSnap.docs.forEach((d) => classesMap.set(d.id, d.data() as SchoolClass));
+
+        const asgnBatch = writeBatch(db);
+        const now = new Date().toISOString();
+        let asgnCount = 0;
+
+        for (const tDoc of teachersSnap.docs) {
+          const t = tDoc.data() as Teacher;
+          if (t.class_id && t.status === 'active') {
+            const cl = classesMap.get(t.class_id);
+            const { grade, section } = extractGradeAndSection(
+              cl?.class_name || t.class_name || '',
+              cl?.grade
+            );
+            const asgnId = `asgn_${t.id}_2026_2027_${t.class_id}`;
+            const computedName = `${grade} ${section}`.trim() || t.class_name || 'Kelas';
+            const asgn: TeacherAssignment = {
+              id: asgnId,
+              teacher_id: t.id,
+              teacherId: t.id,
+              teacher_name: t.name,
+              teacherName: t.name,
+              class_id: t.class_id,
+              classId: t.class_id,
+              grade,
+              section,
+              class_name: computedName,
+              className: computedName,
+              academic_year: '2026/2027',
+              academicYear: '2026/2027',
+              status: 'active',
+              created_at: now,
+              createdAt: now,
+              updated_at: now,
+              updatedAt: now,
+            };
+            asgnBatch.set(doc(db, 'teacher_assignments', asgnId), asgn);
+            asgnCount++;
+          }
+        }
+        if (asgnCount > 0) {
+          await asgnBatch.commit();
+          console.log(`[Firestore] Initialized ${asgnCount} teacher_assignments.`);
+        }
+      }
+    } catch (e) {
+      console.warn('[Firestore] Error ensuring teacher assignments seeded:', e);
+    }
+
     hasSeeded = true;
   } catch (err) {
     console.error('[Firestore] Seeding error:', err);
@@ -300,7 +405,7 @@ export async function logAudit(
       description,
       created_at: now,
     };
-    await setDoc(doc(db, 'audit_logs', id), logData);
+    await setDoc(doc(db, 'audit_logs', id), cleanFirestoreData(logData));
   } catch (err) {
     console.warn('[Audit] Could not write audit log:', err);
   }
@@ -337,7 +442,7 @@ export async function getSchoolSettings(): Promise<{ settings: SchoolSettings }>
       return { settings: snap.data() as SchoolSettings };
     }
     // Set default if missing
-    await setDoc(doc(db, 'school_settings', 'default'), DEFAULT_SETTINGS);
+    await setDoc(doc(db, 'school_settings', 'default'), cleanFirestoreData(DEFAULT_SETTINGS));
     return { settings: DEFAULT_SETTINGS };
   } catch (error) {
     console.warn('[Firestore] getSchoolSettings error:', error);
@@ -355,11 +460,11 @@ export async function updateSchoolSettings(
     const now = new Date().toISOString();
     const updated: SchoolSettings = {
       ...current.settings,
-      ...payload,
+      ...cleanFirestoreData(payload),
       id: 'default',
       updated_at: now,
     };
-    await setDoc(doc(db, 'school_settings', 'default'), updated);
+    await setDoc(doc(db, 'school_settings', 'default'), cleanFirestoreData(updated));
 
     if (adminUser) {
       await logAudit(
@@ -400,10 +505,18 @@ export async function getClasses(): Promise<{ classes: SchoolClass[] }> {
       .filter((t) => t.status === 'active');
 
     const enriched = classes.map((c) => {
+      const { grade: pGrade, section: pSection } = extractGradeAndSection(
+        c.class_name,
+        c.grade
+      );
+      const grade = c.grade || pGrade;
+      const section = (c.section || pSection || '').toUpperCase();
       const count = activeStudents.filter((s) => s.class_id === c.id).length;
       const t = activeTeachers.find((tch) => tch.class_id === c.id || tch.id === c.teacher_id);
       return {
         ...c,
+        grade,
+        section,
         total_students: count,
         teacher_name: t?.name || c.teacher_name || 'Belum Ditugaskan',
         teacher_id: t?.id || c.teacher_id,
@@ -424,90 +537,43 @@ export async function createClass(
 ): Promise<{ message: string; class: SchoolClass }> {
   await ensureFirestoreSeeded();
   try {
-    const rawGrade = Number(payload.grade);
-    let section = String(payload.section || '').trim().toUpperCase();
-    let rawClassName = String(payload.class_name || (payload as any).className || '').trim();
-
-    // If section not provided but class_name provided like "1 A" or "1B" or "I A"
-    if (!section && rawClassName) {
-      const matchSection = rawClassName.match(/[A-Za-z]+$/);
-      if (matchSection) {
-        section = matchSection[0].toUpperCase();
-      }
+    if (!payload.class_name || !String(payload.class_name).trim()) {
+      throw new Error('Nama kelas wajib diisi.');
     }
-    section = section || 'A';
-
-    let grade = 1;
-    if (rawGrade >= 1 && rawGrade <= 6) {
-      grade = rawGrade;
-    } else {
-      const gMatch = rawClassName.match(/\d+/)?.[0];
-      if (gMatch) {
-        grade = parseInt(gMatch, 10);
-      } else {
-        const romanMatch = rawClassName.match(/^(VI|IV|V|III|II|I)/i)?.[0]?.toUpperCase();
-        const romanMap: Record<string, number> = { I: 1, II: 2, III: 3, IV: 4, V: 5, VI: 6 };
-        if (romanMatch && romanMap[romanMatch]) {
-          grade = romanMap[romanMatch];
-        }
-      }
-    }
-
-    const academicYear = payload.academic_year?.trim() || (payload as any).academicYear?.trim() || '2026/2027';
-    // Canonical name e.g. "1 A", "2 B", "3 C"
-    const cleanName = rawClassName || `${grade} ${section}`;
-
-    // DUPLICATE CHECK:
-    // "Jika Admin sudah memiliki 1 A dan mencoba membuat 1 A lagi pada tahun pelajaran ini:
-    // tolak dan tampilkan: 'Kelas 1 A sudah tersedia pada tahun pelajaran ini.'"
-    const classesSnap = await getDocs(
-      query(collection(db, 'classes'), where('status', '==', 'active'))
-    );
-    const existingClasses = classesSnap.docs.map((d) => d.data() as SchoolClass);
-
-    const isDuplicate = existingClasses.some((c) => {
-      const cYear = (c.academic_year || c.academicYear || '').trim();
-      if (cYear !== academicYear) return false;
-
-      const cSection = String(c.section || c.class_name?.match(/[A-Za-z]+$/)?.[0] || '').trim().toUpperCase();
-      if (c.grade === grade && cSection === section) return true;
-
-      const normalize = (s: string) => s.toLowerCase().replace(/kelas\s*/i, '').replace(/[^a-z0-9]/g, '');
-      return normalize(c.class_name || '') === normalize(cleanName);
-    });
-
-    if (isDuplicate) {
-      throw new Error(`Kelas ${cleanName} sudah tersedia pada tahun pelajaran ini.`);
-    }
-
-    const id = `cls_${grade}_${section.toLowerCase()}_${Date.now().toString().slice(-4)}`;
+    const cleanName = String(payload.class_name).trim();
+    const { grade: pGrade, section: pSection } = extractGradeAndSection(cleanName, payload.grade);
+    const grade = Number(payload.grade) || pGrade;
+    const section = (payload.section || pSection || '').toUpperCase();
+    const id = `cls_${cleanName.replace(/\s+/g, '_').toLowerCase()}_${Date.now().toString().slice(-4)}`;
     const now = new Date().toISOString();
 
     const newClass: SchoolClass = {
       id,
       class_name: cleanName,
-      className: cleanName,
       grade,
       section,
-      academic_year: academicYear,
-      academicYear,
-      semester: payload.semester || 'Ganjil',
-      teacher_id: payload.teacher_id || undefined,
-      teacherId: payload.teacher_id || undefined,
-      teacher_name: payload.teacher_name || undefined,
-      teacherName: payload.teacher_name || undefined,
+      academic_year: payload.academic_year?.trim() || '2026/2027',
       status: 'active',
       created_at: now,
       updated_at: now,
     };
+    if (payload.teacher_id) {
+      newClass.teacher_id = payload.teacher_id;
+    }
+    if (payload.teacher_name) {
+      newClass.teacher_name = payload.teacher_name;
+    }
 
-    await setDoc(doc(db, 'classes', id), newClass);
+    await setDoc(doc(db, 'classes', id), cleanFirestoreData(newClass));
 
     // If teacher assigned, link in teacher record
     if (payload.teacher_id) {
       await updateDoc(doc(db, 'teachers', payload.teacher_id), {
         class_id: id,
         class_name: cleanName,
+        grade,
+        section,
+        is_wali_kelas: true,
         updated_at: now,
       });
     }
@@ -546,51 +612,27 @@ export async function updateClass(
 
     const current = currentSnap.data() as SchoolClass;
     const now = new Date().toISOString();
+    const cleanName = payload.class_name ? String(payload.class_name).trim() : current.class_name;
+    const { grade: pGrade, section: pSection } = extractGradeAndSection(cleanName, payload.grade || current.grade);
+    const grade = Number(payload.grade) || current.grade || pGrade;
+    const section = (payload.section || current.section || pSection || '').toUpperCase();
 
-    const targetGrade = payload.grade !== undefined ? Number(payload.grade) : current.grade;
-    const targetSection = (payload.section !== undefined ? String(payload.section) : (current.section || '')).trim().toUpperCase();
-    const targetYear = (payload.academic_year || payload.academicYear || current.academic_year || '2026/2027').trim();
-    const cleanName = payload.class_name?.trim() || (payload as any).className?.trim() || (targetSection ? `${targetGrade} ${targetSection}` : current.class_name);
-
-    // Duplicate check if name/grade/section/year changed
-    if (cleanName !== current.class_name || targetGrade !== current.grade || targetSection !== current.section || targetYear !== current.academic_year) {
-      const classesSnap = await getDocs(
-        query(collection(db, 'classes'), where('status', '==', 'active'))
-      );
-      const existingClasses = classesSnap.docs
-        .map((d) => d.data() as SchoolClass)
-        .filter((c) => c.id !== id);
-
-      const isDuplicate = existingClasses.some((c) => {
-        const cYear = (c.academic_year || c.academicYear || '').trim();
-        if (cYear !== targetYear) return false;
-
-        const cSection = String(c.section || c.class_name?.match(/[A-Za-z]+$/)?.[0] || '').trim().toUpperCase();
-        if (c.grade === targetGrade && cSection === targetSection && targetSection !== '') return true;
-
-        const normalize = (s: string) => s.toLowerCase().replace(/kelas\s*/i, '').replace(/[^a-z0-9]/g, '');
-        return normalize(c.class_name || '') === normalize(cleanName);
-      });
-
-      if (isDuplicate) {
-        throw new Error(`Kelas ${cleanName} sudah tersedia pada tahun pelajaran ini.`);
-      }
-    }
-
-    const updated: SchoolClass = {
+    const updated: any = {
       ...current,
-      ...payload,
+      ...cleanFirestoreData(payload),
       id,
       class_name: cleanName,
-      className: cleanName,
-      grade: targetGrade,
-      section: targetSection || current.section,
-      academic_year: targetYear,
-      academicYear: targetYear,
+      grade,
+      section,
       updated_at: now,
     };
 
-    await setDoc(classRef, updated);
+    if (payload.teacher_id === null || payload.teacher_id === '') {
+      updated.teacher_id = null;
+      updated.teacher_name = null;
+    }
+
+    await setDoc(classRef, cleanFirestoreData(updated));
 
     // If teacher changed
     if (payload.teacher_id !== undefined && payload.teacher_id !== current.teacher_id) {
@@ -600,6 +642,7 @@ export async function updateClass(
           await updateDoc(doc(db, 'teachers', current.teacher_id), {
             class_id: null,
             class_name: null,
+            is_wali_kelas: false,
             updated_at: now,
           });
         } catch (e) {
@@ -612,6 +655,9 @@ export async function updateClass(
           await updateDoc(doc(db, 'teachers', payload.teacher_id), {
             class_id: id,
             class_name: updated.class_name,
+            grade,
+            section,
+            is_wali_kelas: true,
             updated_at: now,
           });
         } catch (e) {
@@ -671,277 +717,43 @@ export async function deleteClass(
 }
 
 // -------------------------------------------------------------
-// DUTY COORDINATORS (KOORDINATOR PIKET)
+// TEACHER ASSIGNMENTS (Wali Kelas)
 // -------------------------------------------------------------
-export async function getDutyCoordinators(): Promise<{ coordinators: DutyCoordinator[] }> {
+export async function getTeacherAssignments(params?: {
+  teacher_id?: string;
+  class_id?: string;
+  academic_year?: string;
+  status?: 'active' | 'inactive';
+}): Promise<{ assignments: TeacherAssignment[] }> {
   await ensureFirestoreSeeded();
   try {
-    const snap = await getDocs(collection(db, 'duty_coordinators'));
-    const coordinators = snap.docs.map((d) => {
-      const data = d.data();
-      return {
-        ...data,
-        id: d.id,
-        teacherId: data.teacherId || data.teacher_id,
-        teacherName: data.teacherName || data.teacher_name,
-        academicYear: data.academicYear || data.academic_year,
-        semester: data.semester,
-        status: data.status || 'active',
-        startDate: data.startDate || data.start_date,
-        endDate: data.endDate || data.end_date,
-        createdAt: data.createdAt || data.created_at,
-        updatedAt: data.updatedAt || data.updated_at,
-        createdBy: data.createdBy || data.created_by,
-        // compatibility aliases
-        teacher_id: data.teacherId || data.teacher_id,
-        teacher_name: data.teacherName || data.teacher_name,
-        academic_year: data.academicYear || data.academic_year,
-        start_date: data.startDate || data.start_date,
-        end_date: data.endDate || data.end_date,
-        created_at: data.createdAt || data.created_at,
-        updated_at: data.updatedAt || data.updated_at,
-        created_by: data.createdBy || data.created_by,
-      } as DutyCoordinator;
-    });
+    const snap = await getDocs(collection(db, 'teacher_assignments'));
+    let assignments: TeacherAssignment[] = snap.docs.map((d) => d.data() as TeacherAssignment);
 
-    // Sort by startDate descending (newest first), then createdAt descending
-    coordinators.sort((a, b) => (b.startDate || b.createdAt || '').localeCompare(a.startDate || a.createdAt || ''));
-    return { coordinators };
-  } catch (error) {
-    handleFirestoreError(error, OperationType.LIST, 'duty_coordinators');
-    return { coordinators: [] };
-  }
-}
-
-export async function getActiveDutyCoordinator(forDate?: string): Promise<DutyCoordinator | null> {
-  await ensureFirestoreSeeded();
-  try {
-    const { coordinators } = await getDutyCoordinators();
-    const activeList = coordinators.filter((c) => c.status === 'active');
-    if (activeList.length === 0) return null;
-
-    const targetDate = forDate || new Date().toISOString().split('T')[0];
-
-    // Find coordinator covering this specific date
-    const matching = activeList.find((c) => {
-      if (c.startDate && c.endDate) {
-        return c.startDate <= targetDate && c.endDate >= targetDate;
-      }
-      return false;
-    });
-
-    if (matching) return matching;
-
-    // Fallback to latest active coordinator if within reasonable range or first active
-    return activeList[0] || null;
-  } catch (error) {
-    return null;
-  }
-}
-
-export async function createDutyCoordinator(
-  payload: Partial<DutyCoordinator>,
-  adminUser?: { id: string; name: string; role: 'admin' | 'guru' }
-): Promise<{ message: string; coordinator: DutyCoordinator }> {
-  await ensureFirestoreSeeded();
-  try {
-    if (adminUser && adminUser.role !== 'admin') {
-      throw new Error('Akses ditolak: Hanya Administrator yang berwenang menentukan Koordinator Piket.');
-    }
-
-    const teacherId = String(payload.teacherId || payload.teacher_id || '').trim();
-    const academicYear = String(payload.academicYear || payload.academic_year || '').trim();
-    const semester = String(payload.semester || '').trim();
-    const startDate = String(payload.startDate || payload.start_date || '').trim();
-    const endDate = String(payload.endDate || payload.end_date || '').trim();
-    const status = payload.status || 'active';
-
-    if (!teacherId) throw new Error('Guru wajib dipilih.');
-    if (!academicYear) throw new Error('Tahun pelajaran wajib diisi.');
-    if (!semester) throw new Error('Semester wajib dipilih.');
-    if (!startDate || !endDate) throw new Error('Periode tanggal mulai dan selesai wajib diisi.');
-    if (endDate < startDate) {
-      throw new Error('Tanggal selesai tidak boleh lebih awal dari tanggal mulai.');
-    }
-
-    // Resolve accurate teacher name from teachers collection
-    const teacherDoc = await getDoc(doc(db, 'teachers', teacherId));
-    if (!teacherDoc.exists()) {
-      throw new Error('Data guru yang dipilih tidak ditemukan di sistem.');
-    }
-    const teacherName = (teacherDoc.data() as Teacher).name || payload.teacherName || 'Guru';
-
-    // Duplicate check:
-    // "Jika guru yang sama sudah menjadi koordinator aktif pada periode yang sama:
-    // tampilkan: 'Guru tersebut sudah memiliki penugasan sebagai Koordinator Piket pada periode ini.'"
-    const { coordinators: existingList } = await getDutyCoordinators();
-    const hasOverlap = existingList.some((c) => {
-      if (c.status !== 'active' || c.teacherId !== teacherId) return false;
-      const overlap = startDate <= c.endDate && endDate >= c.startDate;
-      const sameTerm = c.academicYear === academicYear && c.semester.toLowerCase() === semester.toLowerCase();
-      return overlap || sameTerm;
-    });
-
-    if (hasOverlap) {
-      throw new Error('Guru tersebut sudah memiliki penugasan sebagai Koordinator Piket pada periode ini.');
-    }
-
-    const id = `coord_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    const now = new Date().toISOString();
-    const createdBy = adminUser?.name || 'Admin';
-
-    const newCoordinator: DutyCoordinator = {
-      id,
-      teacherId,
-      teacherName,
-      academicYear,
-      semester,
-      status,
-      startDate,
-      endDate,
-      createdAt: now,
-      updatedAt: now,
-      createdBy,
-      teacher_id: teacherId,
-      teacher_name: teacherName,
-      academic_year: academicYear,
-      start_date: startDate,
-      end_date: endDate,
-      created_at: now,
-      updated_at: now,
-      created_by: createdBy,
-    };
-
-    await setDoc(doc(db, 'duty_coordinators', id), newCoordinator);
-
-    if (adminUser) {
-      await logAudit(
-        adminUser.id,
-        adminUser.name,
-        adminUser.role,
-        'TAMBAH_KOORDINATOR_PIKET',
-        'duty_coordinators',
-        `Menugaskan ${teacherName} sebagai Koordinator Piket periode ${startDate} s/d ${endDate} (${academicYear} - ${semester})`,
-        id
+    if (params?.teacher_id) {
+      assignments = assignments.filter(
+        (a) => a.teacher_id === params.teacher_id || a.teacherId === params.teacher_id
       );
     }
-
-    return {
-      message: `Koordinator Piket ${teacherName} berhasil ditugaskan.`,
-      coordinator: newCoordinator,
-    };
-  } catch (error) {
-    handleFirestoreError(error, OperationType.CREATE, 'duty_coordinators');
-    throw error;
-  }
-}
-
-export async function updateDutyCoordinator(
-  id: string,
-  payload: Partial<DutyCoordinator>,
-  adminUser?: { id: string; name: string; role: 'admin' | 'guru' }
-): Promise<{ message: string; coordinator: DutyCoordinator }> {
-  await ensureFirestoreSeeded();
-  try {
-    if (adminUser && adminUser.role !== 'admin') {
-      throw new Error('Akses ditolak: Hanya Administrator yang berwenang mengubah Koordinator Piket.');
-    }
-
-    const coordRef = doc(db, 'duty_coordinators', id);
-    const snap = await getDoc(coordRef);
-    if (!snap.exists()) {
-      throw new Error('Data penugasan koordinator tidak ditemukan.');
-    }
-    const current = snap.data() as DutyCoordinator;
-
-    const teacherId = String(payload.teacherId || payload.teacher_id || current.teacherId).trim();
-    const academicYear = String(payload.academicYear || payload.academic_year || current.academicYear).trim();
-    const semester = String(payload.semester || current.semester).trim();
-    const startDate = String(payload.startDate || payload.start_date || current.startDate).trim();
-    const endDate = String(payload.endDate || payload.end_date || current.endDate).trim();
-    const status = payload.status || current.status || 'active';
-
-    if (endDate < startDate) {
-      throw new Error('Tanggal selesai tidak boleh lebih awal dari tanggal mulai.');
-    }
-
-    let teacherName = current.teacherName;
-    if (teacherId !== current.teacherId) {
-      const tDoc = await getDoc(doc(db, 'teachers', teacherId));
-      if (tDoc.exists()) {
-        teacherName = (tDoc.data() as Teacher).name;
-      }
-    }
-
-    // Overlap check excluding self
-    if (status === 'active') {
-      const { coordinators: existingList } = await getDutyCoordinators();
-      const hasOverlap = existingList.some((c) => {
-        if (c.id === id || c.status !== 'active' || c.teacherId !== teacherId) return false;
-        const overlap = startDate <= c.endDate && endDate >= c.startDate;
-        const sameTerm = c.academicYear === academicYear && c.semester.toLowerCase() === semester.toLowerCase();
-        return overlap || sameTerm;
-      });
-
-      if (hasOverlap) {
-        throw new Error('Guru tersebut sudah memiliki penugasan sebagai Koordinator Piket pada periode ini.');
-      }
-    }
-
-    const now = new Date().toISOString();
-    const updated: DutyCoordinator = {
-      ...current,
-      ...payload,
-      id,
-      teacherId,
-      teacherName,
-      academicYear,
-      semester,
-      startDate,
-      endDate,
-      status,
-      updatedAt: now,
-      teacher_id: teacherId,
-      teacher_name: teacherName,
-      academic_year: academicYear,
-      start_date: startDate,
-      end_date: endDate,
-      updated_at: now,
-    };
-
-    await setDoc(coordRef, updated);
-
-    if (adminUser) {
-      await logAudit(
-        adminUser.id,
-        adminUser.name,
-        adminUser.role,
-        'UBAH_KOORDINATOR_PIKET',
-        'duty_coordinators',
-        `Memperbarui penugasan Koordinator Piket ${teacherName} (${status})`,
-        id
+    if (params?.class_id) {
+      assignments = assignments.filter(
+        (a) => a.class_id === params.class_id || a.classId === params.class_id
       );
     }
+    if (params?.academic_year) {
+      assignments = assignments.filter(
+        (a) => a.academic_year === params.academic_year || a.academicYear === params.academic_year
+      );
+    }
+    if (params?.status) {
+      assignments = assignments.filter((a) => a.status === params.status);
+    }
 
-    return {
-      message: 'Penugasan Koordinator Piket berhasil diperbarui.',
-      coordinator: updated,
-    };
+    return { assignments };
   } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, `duty_coordinators/${id}`);
-    throw error;
+    handleFirestoreError(error, OperationType.LIST, 'teacher_assignments');
+    return { assignments: [] };
   }
-}
-
-export async function toggleDutyCoordinatorStatus(
-  id: string,
-  newStatus: 'active' | 'inactive',
-  adminUser?: { id: string; name: string; role: 'admin' | 'guru' }
-): Promise<{ message: string }> {
-  await updateDutyCoordinator(id, { status: newStatus }, adminUser);
-  return {
-    message: `Status Koordinator Piket berhasil diubah menjadi ${newStatus === 'active' ? 'Aktif' : 'Tidak Aktif'}.`,
-  };
 }
 
 // -------------------------------------------------------------
@@ -950,22 +762,47 @@ export async function toggleDutyCoordinatorStatus(
 export async function getTeachers(): Promise<{ teachers: Teacher[] }> {
   await ensureFirestoreSeeded();
   try {
-    const [tSnap, cSnap, uSnap] = await Promise.all([
+    const [tSnap, cSnap, uSnap, aSnap] = await Promise.all([
       getDocs(collection(db, 'teachers')),
       getDocs(collection(db, 'classes')),
       getDocs(collection(db, 'users')),
+      getDocs(collection(db, 'teacher_assignments')),
     ]);
 
     const teachers = tSnap.docs.map((d) => d.data() as Teacher).filter((t) => t.status === 'active');
     const classes = cSnap.docs.map((d) => d.data() as SchoolClass);
     const users = uSnap.docs.map((d) => d.data() as User);
+    const assignments = aSnap.docs.map((d) => d.data() as TeacherAssignment);
 
     const enriched = teachers.map((t) => {
-      const cl = t.class_id ? classes.find((c) => c.id === t.class_id) : undefined;
+      // Find active assignment
+      const activeAsgn = assignments.find(
+        (a) => (a.teacher_id === t.id || a.teacherId === t.id) && a.status === 'active'
+      );
+      const effectiveClassId = activeAsgn?.class_id || activeAsgn?.classId || t.class_id;
+      const cl = effectiveClassId ? classes.find((c) => c.id === effectiveClassId) : undefined;
       const u = users.find((usr) => usr.id === t.user_id);
+
+      const { grade: pGrade, section: pSection } = extractGradeAndSection(
+        cl?.class_name || t.class_name || '',
+        cl?.grade
+      );
+      const grade = activeAsgn?.grade ?? cl?.grade ?? pGrade;
+      const section = ((activeAsgn?.section ?? cl?.section ?? pSection) || '').toUpperCase();
+      const isWaliKelas = Boolean(effectiveClassId && (activeAsgn || cl));
+      const formattedClassName =
+        activeAsgn?.class_name ||
+        activeAsgn?.className ||
+        (grade && section ? `${grade} ${section}` : cl?.class_name || t.class_name);
+
       return {
         ...t,
-        class_name: cl?.class_name || t.class_name,
+        class_id: effectiveClassId || undefined,
+        class_name: isWaliKelas ? formattedClassName : undefined,
+        grade: isWaliKelas ? grade : undefined,
+        section: isWaliKelas ? section : undefined,
+        is_wali_kelas: isWaliKelas,
+        active_assignment: activeAsgn,
         username: u?.username,
         email: u?.email || t.email,
       };
@@ -985,7 +822,20 @@ export async function createTeacher(
 ): Promise<{ message: string; teacher: Teacher }> {
   await ensureFirestoreSeeded();
   try {
-    const { name, nip, phone, email, username, password, class_id } = payload || {};
+    const {
+      name,
+      nip,
+      phone,
+      email,
+      username,
+      password,
+      class_id,
+      is_wali_kelas,
+      grade,
+      section,
+      academic_year,
+    } = payload || {};
+
     if (!name || !String(name).trim()) {
       throw new Error('Nama guru wajib diisi.');
     }
@@ -993,6 +843,7 @@ export async function createTeacher(
     const cleanName = String(name).trim();
     const cleanNip = nip && String(nip).trim() !== '' ? String(nip).trim() : '-';
     const cleanPhone = phone ? String(phone).trim() : '';
+    const academicYear = academic_year?.trim() || '2026/2027';
 
     // Generate unique username
     let rawUser = String(username || '')
@@ -1012,13 +863,54 @@ export async function createTeacher(
       finalUsername = `${rawUser}_${Date.now().toString().slice(-4)}`;
     }
 
-    const finalPassword = password && String(password).trim().length >= 4 ? String(password).trim() : 'guru123';
+    const finalPassword =
+      password && String(password).trim().length >= 4 ? String(password).trim() : 'guru123';
     const salt = bcrypt.genSaltSync(10);
     const hashedPassword = bcrypt.hashSync(finalPassword, salt);
 
     const now = new Date().toISOString();
     const userId = `usr_${Date.now()}_${finalUsername}`;
     const teacherId = `tch_${Date.now()}`;
+
+    // Validate Wali Kelas if checked
+    let targetClass: SchoolClass | null = null;
+    let computedClassName = '';
+    const shouldAssign = Boolean(is_wali_kelas && class_id);
+
+    if (is_wali_kelas && !class_id) {
+      throw new Error('Silakan pilih tingkat dan rombel kelas.');
+    }
+
+    if (shouldAssign) {
+      const classRef = doc(db, 'classes', class_id);
+      const classSnap = await getDoc(classRef);
+      if (!classSnap.exists()) {
+        throw new Error('Kelas yang dipilih belum tersedia di database.');
+      }
+      targetClass = classSnap.data() as SchoolClass;
+
+      // Check if class already has an active wali kelas
+      const activeAsgns = await getTeacherAssignments({
+        class_id,
+        academic_year: academicYear,
+        status: 'active',
+      });
+      if (activeAsgns.assignments.length > 0) {
+        const cur = activeAsgns.assignments[0];
+        throw new Error(
+          `Kelas ${cur.class_name || targetClass.class_name} sudah memiliki wali kelas aktif: ${cur.teacher_name || 'Guru lain'}.`
+        );
+      }
+      if (targetClass.teacher_id && targetClass.teacher_id !== teacherId) {
+        throw new Error(
+          `Kelas ${targetClass.class_name} sudah memiliki wali kelas aktif: ${targetClass.teacher_name || 'Guru lain'}.`
+        );
+      }
+
+      const effectiveGrade = Number(grade) || targetClass.grade || 1;
+      const effectiveSection = String(section || targetClass.section || '').toUpperCase();
+      computedClassName = `${effectiveGrade} ${effectiveSection}`.trim() || targetClass.class_name;
+    }
 
     const batch = writeBatch(db);
 
@@ -1030,28 +922,64 @@ export async function createTeacher(
       email: email?.trim() || `${finalUsername}@sdnoehendak.sch.id`,
       password: hashedPassword,
       role: 'guru',
+      teacher_id: teacherId,
+      teacherId: teacherId,
       status: 'active',
       created_at: now,
       updated_at: now,
     };
-    batch.set(doc(db, 'users', userId), newUser);
+    batch.set(doc(db, 'users', userId), cleanFirestoreData(newUser));
 
     // 2. Create Teacher
-    const newTeacher: Teacher = {
+    const newTeacher: Partial<Teacher> & Record<string, any> = {
       id: teacherId,
       user_id: userId,
       nip: cleanNip,
       name: cleanName,
-      class_id: class_id || undefined,
       phone: cleanPhone,
+      is_wali_kelas: Boolean(shouldAssign),
       status: 'active',
       created_at: now,
       updated_at: now,
     };
-    batch.set(doc(db, 'teachers', teacherId), newTeacher);
 
-    // 3. Link Class if selected
-    if (class_id) {
+    if (shouldAssign && class_id && targetClass) {
+      newTeacher.class_id = class_id;
+      newTeacher.class_name = computedClassName;
+      newTeacher.grade = Number(grade) || targetClass.grade || 1;
+      newTeacher.section = String(section || targetClass.section || '').toUpperCase();
+    }
+
+    batch.set(doc(db, 'teachers', teacherId), cleanFirestoreData(newTeacher));
+
+    // 3. Create TeacherAssignment & link Class
+    if (shouldAssign && class_id && targetClass) {
+      const asgnId = `asgn_${teacherId}_${academicYear.replace(/[\/\s]/g, '_')}_${class_id}`;
+      const effectiveGrade = Number(grade) || targetClass.grade || 1;
+      const effectiveSection = String(section || targetClass.section || '').toUpperCase();
+
+      const newAssignment: TeacherAssignment = {
+        id: asgnId,
+        teacher_id: teacherId,
+        teacherId: teacherId,
+        teacher_name: cleanName,
+        teacherName: cleanName,
+        class_id,
+        classId: class_id,
+        grade: effectiveGrade,
+        section: effectiveSection,
+        class_name: computedClassName,
+        className: computedClassName,
+        academic_year: academicYear,
+        academicYear: academicYear,
+        status: 'active',
+        created_at: now,
+        createdAt: now,
+        updated_at: now,
+        updatedAt: now,
+      };
+      batch.set(doc(db, 'teacher_assignments', asgnId), cleanFirestoreData(newAssignment));
+
       batch.update(doc(db, 'classes', class_id), {
         teacher_id: teacherId,
         teacher_name: cleanName,
@@ -1068,14 +996,14 @@ export async function createTeacher(
         adminUser.role,
         'TAMBAH_GURU',
         'teachers',
-        `Menambahkan guru baru: ${cleanName} (NIP: ${cleanNip}, Username: ${finalUsername})`,
+        `Menambahkan guru baru: ${cleanName} (NIP: ${cleanNip}, Username: ${finalUsername})${shouldAssign ? ` sebagai Wali Kelas ${computedClassName}` : ''}`,
         teacherId
       );
     }
 
     return {
       message: `Guru berhasil ditambahkan (Username: ${finalUsername}).`,
-      teacher: newTeacher,
+      teacher: newTeacher as Teacher,
     };
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, 'teachers');
@@ -1099,18 +1027,214 @@ export async function updateTeacher(
     const currentTeacher = tSnap.data() as Teacher;
     const now = new Date().toISOString();
 
-    const { name, nip, phone, email, password, class_id } = payload;
-    const updatedTeacher: Teacher = {
+    const {
+      name,
+      nip,
+      phone,
+      email,
+      password,
+      class_id,
+      is_wali_kelas,
+      grade,
+      section,
+      academic_year,
+      reassign_confirmed,
+    } = payload;
+
+    const academicYear = academic_year?.trim() || '2026/2027';
+    const cleanName = name ? String(name).trim() : currentTeacher.name;
+
+    // Check existing active assignments for this teacher
+    const teacherActiveAsgns = await getTeacherAssignments({
+      teacher_id: id,
+      academic_year: academicYear,
+      status: 'active',
+    });
+    const currentActiveAsgn = teacherActiveAsgns.assignments[0];
+    const previousClassId = currentActiveAsgn?.class_id || currentTeacher.class_id;
+
+    // Determine target assignment intention
+    // If is_wali_kelas is explicitly false or class_id is null/empty -> unassign
+    const isExplicitlyUnassigned =
+      is_wali_kelas === false || (is_wali_kelas === undefined && class_id === null);
+    const isExplicitlyAssigned = is_wali_kelas === true;
+
+    const batch = writeBatch(db);
+
+    let finalClassId: string | null = currentTeacher.class_id || null;
+    let finalClassName: string | null = currentTeacher.class_name || null;
+    let finalGrade: number | null = currentTeacher.grade || null;
+    let finalSection: string | null = currentTeacher.section || null;
+    let finalIsWaliKelas = Boolean(currentTeacher.class_id);
+
+    if (isExplicitlyUnassigned) {
+      // 1. Deactivate all active assignments for this teacher
+      for (const asgn of teacherActiveAsgns.assignments) {
+        batch.update(doc(db, 'teacher_assignments', asgn.id), {
+          status: 'inactive',
+          updated_at: now,
+          updatedAt: now,
+        });
+      }
+
+      // 2. Unlink from class
+      if (previousClassId) {
+        try {
+          batch.update(doc(db, 'classes', previousClassId), {
+            teacher_id: null,
+            teacher_name: null,
+            updated_at: now,
+          });
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      finalClassId = null;
+      finalClassName = null;
+      finalGrade = null;
+      finalSection = null;
+      finalIsWaliKelas = false;
+
+      if (adminUser) {
+        await logAudit(
+          adminUser.id,
+          adminUser.name,
+          adminUser.role,
+          'BATALKAN_PENUGASAN_WALI_KELAS',
+          'teacher_assignments',
+          `Membatalkan status wali kelas untuk guru: ${cleanName}`,
+          id
+        );
+      }
+    } else if (isExplicitlyAssigned) {
+      if (!class_id) {
+        throw new Error('Silakan pilih tingkat dan rombel kelas.');
+      }
+
+      const targetClassRef = doc(db, 'classes', class_id);
+      const targetClassSnap = await getDoc(targetClassRef);
+      if (!targetClassSnap.exists()) {
+        throw new Error('Kelas yang dipilih belum tersedia di database.');
+      }
+      const targetClass = targetClassSnap.data() as SchoolClass;
+
+      // Check if target class already has an active assignment from ANOTHER teacher (Point 8)
+      const classActiveAsgns = await getTeacherAssignments({
+        class_id,
+        academic_year: academicYear,
+        status: 'active',
+      });
+      const conflictAsgn = classActiveAsgns.assignments.find(
+        (a) => a.teacher_id !== id && a.teacherId !== id
+      );
+      if (conflictAsgn) {
+        throw new Error(
+          `Kelas ${conflictAsgn.class_name || targetClass.class_name} sudah memiliki wali kelas aktif: ${conflictAsgn.teacher_name || 'Guru lain'}.`
+        );
+      }
+      if (targetClass.teacher_id && targetClass.teacher_id !== id) {
+        throw new Error(
+          `Kelas ${targetClass.class_name} sudah memiliki wali kelas aktif: ${targetClass.teacher_name || 'Guru lain'}.`
+        );
+      }
+
+      // Check if teacher is already assigned to another class (Point 9)
+      const isMovingToDifferentClass = previousClassId && previousClassId !== class_id;
+      if (isMovingToDifferentClass && !reassign_confirmed) {
+        const prevName = currentActiveAsgn?.class_name || currentTeacher.class_name || 'kelas lain';
+        throw new Error(
+          `Guru ini sudah ditugaskan sebagai wali kelas ${prevName}. Silakan konfirmasi untuk memindahkan penugasan.`
+        );
+      }
+
+      // If moving to different class, deactivate old assignment and unlink old class
+      if (isMovingToDifferentClass) {
+        for (const oldAsgn of teacherActiveAsgns.assignments) {
+          batch.update(doc(db, 'teacher_assignments', oldAsgn.id), {
+            status: 'inactive',
+            updated_at: now,
+            updatedAt: now,
+          });
+        }
+        if (previousClassId) {
+          batch.update(doc(db, 'classes', previousClassId), {
+            teacher_id: null,
+            teacher_name: null,
+            updated_at: now,
+          });
+        }
+      }
+
+      const effectiveGrade = Number(grade) || targetClass.grade || 1;
+      const effectiveSection = String(section || targetClass.section || '').toUpperCase();
+      const computedClassName =
+        `${effectiveGrade} ${effectiveSection}`.trim() || targetClass.class_name;
+
+      // Create new assignment document
+      const asgnId = `asgn_${id}_${academicYear.replace(/[\/\s]/g, '_')}_${class_id}_${Date.now()}`;
+      const newAssignment: TeacherAssignment = {
+        id: asgnId,
+        teacher_id: id,
+        teacherId: id,
+        teacher_name: cleanName,
+        teacherName: cleanName,
+        class_id,
+        classId: class_id,
+        grade: effectiveGrade,
+        section: effectiveSection,
+        class_name: computedClassName,
+        className: computedClassName,
+        academic_year: academicYear,
+        academicYear: academicYear,
+        status: 'active',
+        created_at: now,
+        createdAt: now,
+        updated_at: now,
+        updatedAt: now,
+      };
+      batch.set(doc(db, 'teacher_assignments', asgnId), cleanFirestoreData(newAssignment));
+
+      // Update target class
+      batch.update(doc(db, 'classes', class_id), {
+        teacher_id: id,
+        teacher_name: cleanName,
+        updated_at: now,
+      });
+
+      finalClassId = class_id;
+      finalClassName = computedClassName;
+      finalGrade = effectiveGrade;
+      finalSection = effectiveSection;
+      finalIsWaliKelas = true;
+
+      if (adminUser) {
+        await logAudit(
+          adminUser.id,
+          adminUser.name,
+          adminUser.role,
+          isMovingToDifferentClass ? 'PINDAHKAN_WALI_KELAS' : 'TUGASKAN_WALI_KELAS',
+          'teacher_assignments',
+          `${isMovingToDifferentClass ? 'Memindahkan penugasan wali kelas' : 'Menugaskan wali kelas'} ${cleanName} ke Kelas ${computedClassName}`,
+          asgnId
+        );
+      }
+    }
+
+    const updatedTeacher: any = {
       ...currentTeacher,
-      name: name ? String(name).trim() : currentTeacher.name,
-      nip: nip !== undefined ? (nip ? String(nip).trim() : '-') : currentTeacher.nip,
-      phone: phone !== undefined ? String(phone).trim() : currentTeacher.phone,
-      class_id: class_id !== undefined ? (class_id || undefined) : currentTeacher.class_id,
+      name: cleanName,
+      nip: nip !== undefined ? (nip ? String(nip).trim() : '-') : (currentTeacher.nip || '-'),
+      phone: phone !== undefined ? String(phone).trim() : (currentTeacher.phone || ''),
+      class_id: finalClassId,
+      class_name: finalClassName,
+      grade: finalGrade,
+      section: finalSection,
+      is_wali_kelas: finalIsWaliKelas,
       updated_at: now,
     };
 
-    const batch = writeBatch(db);
-    batch.set(teacherRef, updatedTeacher);
+    batch.set(teacherRef, cleanFirestoreData(updatedTeacher));
 
     // Update corresponding user record
     if (currentTeacher.user_id) {
@@ -1124,25 +1248,7 @@ export async function updateTeacher(
         const salt = bcrypt.genSaltSync(10);
         userUpdates.password = bcrypt.hashSync(String(password).trim(), salt);
       }
-      batch.update(userRef, userUpdates);
-    }
-
-    // Class reassignment
-    if (class_id !== undefined && class_id !== currentTeacher.class_id) {
-      if (currentTeacher.class_id) {
-        batch.update(doc(db, 'classes', currentTeacher.class_id), {
-          teacher_id: null,
-          teacher_name: null,
-          updated_at: now,
-        });
-      }
-      if (class_id) {
-        batch.update(doc(db, 'classes', class_id), {
-          teacher_id: id,
-          teacher_name: updatedTeacher.name,
-          updated_at: now,
-        });
-      }
+      batch.update(userRef, cleanFirestoreData(userUpdates));
     }
 
     await batch.commit();
@@ -1181,7 +1287,13 @@ export async function deleteTeacher(
     const now = new Date().toISOString();
 
     const batch = writeBatch(db);
-    batch.update(teacherRef, { status: 'inactive', updated_at: now });
+    batch.update(teacherRef, {
+      status: 'inactive',
+      updated_at: now,
+      class_id: null,
+      class_name: null,
+      is_wali_kelas: false,
+    });
 
     if (currentTeacher.user_id) {
       batch.update(doc(db, 'users', currentTeacher.user_id), { status: 'inactive', updated_at: now });
@@ -1192,6 +1304,16 @@ export async function deleteTeacher(
         teacher_id: null,
         teacher_name: null,
         updated_at: now,
+      });
+    }
+
+    // Deactivate teacher assignments
+    const asgns = await getTeacherAssignments({ teacher_id: id, status: 'active' });
+    for (const a of asgns.assignments) {
+      batch.update(doc(db, 'teacher_assignments', a.id), {
+        status: 'inactive',
+        updated_at: now,
+        updatedAt: now,
       });
     }
 
@@ -1310,7 +1432,7 @@ export async function createStudent(
       updated_at: now,
     };
 
-    await setDoc(doc(db, 'students', id), newStudent);
+    await setDoc(doc(db, 'students', id), cleanFirestoreData(newStudent));
 
     if (adminUser) {
       await logAudit(
@@ -1370,13 +1492,13 @@ export async function updateStudent(
 
     const updated: Student = {
       ...current,
-      ...payload,
+      ...cleanFirestoreData(payload),
       id,
       class_name: className,
       updated_at: now,
     };
 
-    await setDoc(studentRef, updated);
+    await setDoc(studentRef, cleanFirestoreData(updated));
 
     if (adminUser) {
       await logAudit(
@@ -1432,108 +1554,6 @@ export async function deleteStudent(
     return { message: 'Data siswa berhasil dinonaktifkan.' };
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `students/${id}`);
-    throw error;
-  }
-}
-
-export async function bulkDeleteStudentsByClass(
-  classId: string,
-  adminUser?: { id: string; name: string; role: 'admin' | 'guru' }
-): Promise<{ message: string; total: number; affectedCount: number; failedCount: number }> {
-  await ensureFirestoreSeeded();
-  try {
-    if (!adminUser || adminUser.role !== 'admin') {
-      throw new Error('Akses ditolak: Hanya Administrator yang berwenang menghapus seluruh data siswa per kelas.');
-    }
-
-    if (!classId) {
-      throw new Error('ID Kelas wajib ditentukan.');
-    }
-
-    const classDoc = await getDoc(doc(db, 'classes', classId));
-    if (!classDoc.exists()) {
-      throw new Error('Data kelas tidak ditemukan di sistem.');
-    }
-    const classData = classDoc.data() as SchoolClass;
-    const className = classData.class_name || classData.className || 'Kelas Terpilih';
-
-    // Query all active students in this class
-    const studentsQuery = query(
-      collection(db, 'students'),
-      where('class_id', '==', classId),
-      where('status', '==', 'active')
-    );
-    const snap = await getDocs(studentsQuery);
-    const total = snap.size;
-
-    if (total === 0) {
-      return {
-        message: `Tidak ada siswa aktif yang ditemukan di kelas ${className}.`,
-        total: 0,
-        affectedCount: 0,
-        failedCount: 0,
-      };
-    }
-
-    let affectedCount = 0;
-    let failedCount = 0;
-    const now = new Date().toISOString();
-
-    // Firestore batch writes max 500 operations per batch. We chunk safely at 400.
-    const docs = snap.docs;
-    const chunkSize = 400;
-
-    for (let i = 0; i < docs.length; i += chunkSize) {
-      const chunk = docs.slice(i, i + chunkSize);
-      const batch = writeBatch(db);
-
-      chunk.forEach((d) => {
-        batch.update(d.ref, {
-          status: 'inactive',
-          updated_at: now,
-          inactivated_reason: 'BULK_DELETE_PER_KELAS',
-          inactivated_by: adminUser.name,
-        });
-      });
-
-      try {
-        await batch.commit();
-        affectedCount += chunk.length;
-      } catch (batchErr) {
-        console.error('Error committing bulk student delete batch', batchErr);
-        failedCount += chunk.length;
-      }
-    }
-
-    if (affectedCount > 0) {
-      await logAudit(
-        adminUser.id,
-        adminUser.name,
-        adminUser.role,
-        'BULK_DELETE_STUDENTS',
-        'students',
-        `Admin menghapus ${affectedCount} siswa dari kelas ${className}.`,
-        classId
-      );
-    }
-
-    if (failedCount > 0) {
-      return {
-        message: `Penghapusan belum selesai. Berhasil: ${affectedCount}, Gagal: ${failedCount}. Silakan ulangi kembali.`,
-        total,
-        affectedCount,
-        failedCount,
-      };
-    }
-
-    return {
-      message: `Berhasil menghapus ${affectedCount} siswa dari kelas ${className}.`,
-      total,
-      affectedCount,
-      failedCount: 0,
-    };
-  } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, `students/bulk/${classId}`);
     throw error;
   }
 }
@@ -1937,21 +1957,6 @@ export async function saveDailyReport(
     const totalStudents = attendance_items.length;
     const percentage = totalStudents > 0 ? Math.round((presentCount / totalStudents) * 100) : 0;
 
-    // Resolve active Duty Coordinator on this report date
-    let coordinatorId = payload.coordinator_id || (payload as any).coordinatorId || '';
-    let coordinatorName = payload.coordinator_name || (payload as any).coordinatorName || '';
-    if (!coordinatorId) {
-      try {
-        const activeCoord = await getActiveDutyCoordinator(date);
-        if (activeCoord) {
-          coordinatorId = activeCoord.teacherId || activeCoord.teacher_id || '';
-          coordinatorName = activeCoord.teacherName || activeCoord.teacher_name || '';
-        }
-      } catch (e) {
-        // non-blocking
-      }
-    }
-
     const reportData: DailyReport & any = {
       id: reportId,
       date,
@@ -1964,10 +1969,6 @@ export async function saveDailyReport(
       teacherId: effectiveTeacherId,
       teacher_name: teacherName,
       teacherName: teacherName,
-      coordinator_id: coordinatorId || undefined,
-      coordinatorId: coordinatorId || undefined,
-      coordinator_name: coordinatorName || undefined,
-      coordinatorName: coordinatorName || undefined,
       created_by: currentUser?.id || (payload as any).created_by || (payload as any).createdBy || effectiveTeacherId,
       createdBy: currentUser?.id || (payload as any).created_by || (payload as any).createdBy || effectiveTeacherId,
       semester: payload.semester || 'Ganjil',
@@ -1997,7 +1998,7 @@ export async function saveDailyReport(
 
     // ATOMIC BATCH WRITE: Report + All Attendance Records
     const batch = writeBatch(db);
-    batch.set(doc(db, 'daily_reports', reportId), reportData);
+    batch.set(doc(db, 'daily_reports', reportId), cleanFirestoreData(reportData));
 
     // Save attendance items
     attendance_items.forEach((item: any) => {
@@ -2014,7 +2015,7 @@ export async function saveDailyReport(
         status: (item.status || 'H') as AttendanceStatus,
         note: item.note ? String(item.note) : '',
       };
-      batch.set(doc(db, 'attendance', attId), attRecord);
+      batch.set(doc(db, 'attendance', attId), cleanFirestoreData(attRecord));
     });
 
     await batch.commit();
@@ -2161,12 +2162,11 @@ export async function getAdminDashboardStats(dateQuery?: string): Promise<Dashbo
   try {
     const todayStr = dateQuery || new Date().toISOString().split('T')[0];
 
-    const [cRes, sRes, tRes, rRes, activeCoord] = await Promise.all([
+    const [cRes, sRes, tRes, rRes] = await Promise.all([
       getClasses(),
       getStudents(),
       getTeachers(),
       getDailyReports({ date: todayStr }),
-      getActiveDutyCoordinator(todayStr),
     ]);
 
     const activeClasses = cRes.classes;
@@ -2229,7 +2229,6 @@ export async function getAdminDashboardStats(dateQuery?: string): Promise<Dashbo
       today_permit: todayPermit,
       today_absent: todayAbsent,
       today_not_filled_classes: notFilledCount,
-      active_coordinator: activeCoord || null,
       today_status_list: todayStatusList,
     };
   } catch (error) {

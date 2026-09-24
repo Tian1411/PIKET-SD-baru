@@ -29,16 +29,16 @@ service cloud.firestore {
       allow write: if isValidId(teacherId);
     }
 
+    // TEACHER ASSIGNMENTS collection (Wali Kelas)
+    match /teacher_assignments/{assignmentId} {
+      allow read: if true;
+      allow write: if isValidId(assignmentId);
+    }
+
     // CLASSES collection
     match /classes/{classId} {
       allow read: if true;
       allow write: if isValidId(classId);
-    }
-
-    // DUTY COORDINATORS collection
-    match /duty_coordinators/{coordinatorId} {
-      allow read: if true;
-      allow write: if isValidId(coordinatorId);
     }
 
     // STUDENTS collection

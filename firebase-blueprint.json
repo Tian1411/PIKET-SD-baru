@@ -27,6 +27,8 @@
         "userId": { "type": "string" },
         "name": { "type": "string", "maxLength": 100 },
         "nip": { "type": "string", "maxLength": 30 },
+        "nuptk": { "type": "string", "maxLength": 30 },
+        "gender": { "type": "string", "enum": ["L", "P"] },
         "email": { "type": "string", "maxLength": 100 },
         "phone": { "type": "string", "maxLength": 25 },
         "classId": { "type": "string" },
@@ -55,6 +57,25 @@
         "updatedAt": { "type": "string" }
       },
       "required": ["id", "className", "grade", "status"]
+    },
+    "TeacherAssignment": {
+      "title": "TeacherAssignment",
+      "description": "Penugasan resmi guru sebagai wali kelas per tahun pelajaran",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "teacherName": { "type": "string", "maxLength": 100 },
+        "classId": { "type": "string" },
+        "className": { "type": "string", "maxLength": 50 },
+        "grade": { "type": "number" },
+        "section": { "type": "string", "maxLength": 10 },
+        "academicYear": { "type": "string", "maxLength": 20 },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "teacherId", "classId", "academicYear", "status"]
     },
     "Student": {
       "title": "Student",
@@ -89,8 +110,6 @@
         "semester": { "type": "string", "maxLength": 20 },
         "academicYear": { "type": "string", "maxLength": 20 },
         "cleanlinessStatus": { "type": "string", "maxLength": 30 },
-        "coordinatorId": { "type": "string" },
-        "coordinatorName": { "type": "string", "maxLength": 100 },
         "activityNotes": { "type": "array" },
         "incidentNotes": { "type": "string", "maxLength": 1000 },
         "followUp": { "type": "string", "maxLength": 1000 },
@@ -160,25 +179,6 @@
         "createdAt": { "type": "string" }
       },
       "required": ["id", "userId", "action", "description"]
-    },
-    "DutyCoordinator": {
-      "title": "DutyCoordinator",
-      "description": "Penugasan Koordinator Piket harian per periode",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "teacherId": { "type": "string" },
-        "teacherName": { "type": "string", "maxLength": 100 },
-        "academicYear": { "type": "string", "maxLength": 20 },
-        "semester": { "type": "string", "enum": ["Ganjil", "Genap"] },
-        "status": { "type": "string", "enum": ["active", "inactive"] },
-        "startDate": { "type": "string", "maxLength": 10 },
-        "endDate": { "type": "string", "maxLength": 10 },
-        "createdAt": { "type": "string" },
-        "updatedAt": { "type": "string" },
-        "createdBy": { "type": "string", "maxLength": 100 }
-      },
-      "required": ["id", "teacherId", "teacherName", "academicYear", "semester", "status", "startDate", "endDate"]
     }
   },
   "firestore": {
@@ -190,13 +190,13 @@
       "schema": "Teacher",
       "description": "Data profil guru"
     },
+    "/teacher_assignments/{assignmentId}": {
+      "schema": "TeacherAssignment",
+      "description": "Data riwayat penugasan wali kelas per tahun pelajaran"
+    },
     "/classes/{classId}": {
       "schema": "SchoolClass",
       "description": "Data kelas"
-    },
-    "/duty_coordinators/{coordinatorId}": {
-      "schema": "DutyCoordinator",
-      "description": "Data penugasan koordinator piket"
     },
     "/students/{studentId}": {
       "schema": "Student",
