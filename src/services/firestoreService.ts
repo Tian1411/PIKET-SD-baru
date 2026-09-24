@@ -29,6 +29,7 @@ import {
   ReportStatus,
 } from '../types';
 import bcrypt from 'bcryptjs';
+import { extractFieldsFromRow, normalizeGender, matchClass } from '../utils/excelImport';
 
 const DEFAULT_SETTINGS: SchoolSettings = {
   id: 'default',
@@ -1068,63 +1069,207 @@ export async function deleteStudent(
 
 export async function importStudents(
   items: any[],
-  adminUser?: { id: string; name: string; role: 'admin' | 'guru' }
+  adminUser?: { id: string; name: string; role: 'admin' | 'guru' },
+  defaultClassId?: string
 ): Promise<{ message: string; total_imported: number; failed_count: number; errors: any[] }> {
   await ensureFirestoreSeeded();
+
+  if (adminUser && adminUser.role !== 'admin') {
+    throw new Error('Akses ditolak: Hanya Administrator yang berwenang mengimpor data siswa.');
+  }
+
   try {
     const existingSnap = await getDocs(collection(db, 'students'));
-    const existingStudents = existingSnap.docs.map((d) => d.data() as Student);
-    const existingNisSet = new Set(existingStudents.map((s) => s.nis));
+    const existingStudents = existingSnap.docs
+      .map((d) => d.data() as Student)
+      .filter((s) => s.status === 'active');
+
+    const existingNisMap = new Map<string, Student>();
+    const existingNisnMap = new Map<string, Student>();
+
+    existingStudents.forEach((s) => {
+      if (s.nis) existingNisMap.set(String(s.nis).trim(), s);
+      if (s.nisn && s.nisn !== '-') existingNisnMap.set(String(s.nisn).trim(), s);
+    });
 
     const classesSnap = await getDocs(collection(db, 'classes'));
     const classes = classesSnap.docs.map((d) => d.data() as SchoolClass);
 
-    const batch = writeBatch(db);
-    let totalImported = 0;
+    const fileNisSet = new Set<string>();
+    const fileNisnSet = new Set<string>();
+
+    const validStudentsToInsert: Student[] = [];
     const errors: any[] = [];
     const now = new Date().toISOString();
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
-      const nis = String(item.nis || '').trim();
-      const name = String(item.name || '').trim();
-      const rawClass = String(item.class_name || item.class || '').trim().toLowerCase();
+      const rowNum = item.rowNumber || item.__rowNum__ || i + 1;
 
-      if (!nis || !name) {
-        errors.push({ row: i + 1, error: 'NIS dan Nama siswa tidak boleh kosong.' });
+      // Extract raw fields flexibly from any header variants
+      const extracted = extractFieldsFromRow(item, rowNum);
+      const { rawNis, rawNisn, rawName, rawGender, rawClass } = extracted;
+
+      // Skip completely empty row
+      if (!rawNis && !rawNisn && !rawName && !rawGender && !rawClass) {
         continue;
       }
-      if (existingNisSet.has(nis)) {
-        errors.push({ row: i + 1, nis, name, error: `NIS ${nis} sudah ada di database.` });
+
+      // 1. Validate NIS
+      if (!rawNis) {
+        const errObj = {
+          row: rowNum,
+          nis: '',
+          name: rawName,
+          reason: 'NIS siswa wajib diisi.',
+          error: 'NIS siswa wajib diisi.',
+        };
+        errors.push(errObj);
         continue;
       }
 
-      // Match class
-      const targetClass = classes.find(
-        (c) => c.class_name.toLowerCase() === rawClass || c.id.toLowerCase() === rawClass
-      ) || classes[0];
+      // 2. Validate Name
+      if (!rawName) {
+        const errObj = {
+          row: rowNum,
+          nis: rawNis,
+          name: '',
+          reason: 'Nama siswa wajib diisi.',
+          error: 'Nama siswa wajib diisi.',
+        };
+        errors.push(errObj);
+        continue;
+      }
 
-      const id = `stu_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 5)}`;
+      // Check existing NIS in database
+      if (existingNisMap.has(rawNis)) {
+        const existing = existingNisMap.get(rawNis);
+        const reason = `NIS ${rawNis} sudah terdaftar di database (Siswa: ${existing?.name || '-'}).`;
+        errors.push({
+          row: rowNum,
+          nis: rawNis,
+          name: rawName,
+          reason,
+          error: reason,
+        });
+        continue;
+      }
+
+      // Check duplicate NIS in file
+      if (fileNisSet.has(rawNis)) {
+        const reason = `NIS ${rawNis} duplikat di dalam file Excel ini.`;
+        errors.push({
+          row: rowNum,
+          nis: rawNis,
+          name: rawName,
+          reason,
+          error: reason,
+        });
+        continue;
+      }
+
+      // Check NISN if provided
+      const cleanNisn = rawNisn && rawNisn !== '-' ? rawNisn : '-';
+      if (cleanNisn !== '-') {
+        if (existingNisnMap.has(cleanNisn)) {
+          const existing = existingNisnMap.get(cleanNisn);
+          const reason = `NISN ${cleanNisn} sudah terdaftar di database (Siswa: ${existing?.name || '-'}).`;
+          errors.push({
+            row: rowNum,
+            nis: rawNis,
+            nisn: cleanNisn,
+            name: rawName,
+            reason,
+            error: reason,
+          });
+          continue;
+        }
+
+        if (fileNisnSet.has(cleanNisn)) {
+          const reason = `NISN ${cleanNisn} duplikat di dalam file Excel ini.`;
+          errors.push({
+            row: rowNum,
+            nis: rawNis,
+            nisn: cleanNisn,
+            name: rawName,
+            reason,
+            error: reason,
+          });
+          continue;
+        }
+      }
+
+      // Validate Gender
+      const gResult = normalizeGender(rawGender);
+      if (!gResult.isValid && rawGender) {
+        const reason = `Jenis kelamin '${rawGender}' tidak valid (harus L atau P).`;
+        errors.push({
+          row: rowNum,
+          nis: rawNis,
+          name: rawName,
+          reason,
+          error: reason,
+        });
+        continue;
+      }
+
+      // Match Class (prioritize defaultClassId if set by Admin dropdown, otherwise match from Excel)
+      const targetClass = matchClass(rawClass, classes, defaultClassId);
+      if (!targetClass) {
+        const reason = rawClass
+          ? `Kelas '${rawClass}' tidak ditemukan di database.`
+          : 'Kelas tidak ditentukan. Pilih kelas tujuan di atas atau sertakan kolom Kelas pada Excel.';
+        errors.push({
+          row: rowNum,
+          nis: rawNis,
+          name: rawName,
+          reason,
+          error: reason,
+        });
+        continue;
+      }
+
+      // Track uniqueness for remaining items in this batch
+      fileNisSet.add(rawNis);
+      if (cleanNisn !== '-') fileNisnSet.add(cleanNisn);
+
+      const id = `stu_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 6)}`;
       const studentData: Student = {
         id,
-        nis,
-        nisn: item.nisn ? String(item.nisn).trim() : '-',
-        name,
-        gender: String(item.gender || '').toUpperCase() === 'P' ? 'P' : 'L',
-        class_id: targetClass?.id || 'cls_i_a',
-        class_name: targetClass?.class_name || 'I A',
+        nis: rawNis,
+        nisn: cleanNisn,
+        name: rawName,
+        gender: gResult.gender,
+        class_id: targetClass.id,
+        class_name: targetClass.class_name,
         status: 'active',
         created_at: now,
         updated_at: now,
       };
 
-      batch.set(doc(db, 'students', id), studentData);
-      existingNisSet.add(nis);
-      totalImported++;
+      // Add camelCase aliases for maximum compatibility
+      (studentData as any).classId = targetClass.id;
+      (studentData as any).className = targetClass.class_name;
+      (studentData as any).createdAt = now;
+      (studentData as any).updatedAt = now;
+
+      validStudentsToInsert.push(studentData);
     }
 
-    if (totalImported > 0) {
+    // Chunked batch commit (Firestore allows max 500 ops per batch)
+    let totalImported = 0;
+    const CHUNK_SIZE = 300;
+
+    for (let c = 0; c < validStudentsToInsert.length; c += CHUNK_SIZE) {
+      const chunk = validStudentsToInsert.slice(c, c + CHUNK_SIZE);
+      const batch = writeBatch(db);
+
+      for (const st of chunk) {
+        batch.set(doc(db, 'students', st.id), st);
+      }
+
       await batch.commit();
+      totalImported += chunk.length;
     }
 
     if (adminUser && totalImported > 0) {
@@ -1134,12 +1279,19 @@ export async function importStudents(
         adminUser.role,
         'IMPORT_SISWA',
         'students',
-        `Berhasil mengimpor ${totalImported} data siswa ke database Firestore.`
+        `Berhasil mengimpor ${totalImported} data siswa ke database Firestore (${errors.length} baris gagal).`
       );
     }
 
+    const message =
+      totalImported > 0
+        ? `${totalImported} data siswa berhasil disimpan ke database.${
+            errors.length > 0 ? ` (${errors.length} data gagal)` : ''
+          }`
+        : `0 data siswa berhasil disimpan ke database. (${errors.length} data gagal).`;
+
     return {
-      message: `${totalImported} data siswa berhasil disimpan ke database.`,
+      message,
       total_imported: totalImported,
       failed_count: errors.length,
       errors,

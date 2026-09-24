@@ -509,6 +509,7 @@ export const MasterSiswa: React.FC = () => {
           setImportModalOpen(false);
           loadData();
         }}
+        initialClassId={selectedClassId}
       />
     </div>
   );

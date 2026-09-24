@@ -393,14 +393,18 @@ export const api = {
     );
   },
 
-  async importStudents(items: any[]): Promise<{ message: string; total_imported: number; failed_count: number; errors: any[] }> {
+  async importStudents(
+    items: any[],
+    defaultClassId?: string
+  ): Promise<{ message: string; total_imported: number; failed_count: number; errors: any[] }> {
     const currentUser = getCurrentStoredUser();
     if (!currentUser || currentUser.role !== 'admin') {
       throw new Error('Akses ditolak: Hanya Administrator yang berwenang mengimpor data siswa.');
     }
     return firestoreService.importStudents(
       items,
-      { id: currentUser.id, name: currentUser.name, role: currentUser.role }
+      { id: currentUser.id, name: currentUser.name, role: currentUser.role },
+      defaultClassId
     );
   },
 
