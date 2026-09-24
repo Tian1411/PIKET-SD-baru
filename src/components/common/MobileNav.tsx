@@ -9,6 +9,7 @@ import {
   FileSpreadsheet,
   Settings,
   Users,
+  UserCheck,
 } from 'lucide-react';
 
 interface MobileNavProps {
@@ -79,6 +80,18 @@ export const MobileNav: React.FC<MobileNavProps> = ({
             >
               <Users className="w-5 h-5" />
               <span className="text-[10px] leading-none">Siswa</span>
+            </button>
+
+            <button
+              onClick={() => onSelectTab('coordinators')}
+              className={`flex flex-col items-center gap-1 py-1 px-2 rounded-xl transition ${
+                tab === 'coordinators'
+                  ? 'text-blue-700 font-bold'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <UserCheck className="w-5 h-5" />
+              <span className="text-[10px] leading-none">Koord</span>
             </button>
 
             <button

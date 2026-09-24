@@ -16,18 +16,23 @@ import {
   Sparkles,
   RefreshCw,
   FilePlus,
+  UserCheck,
+  ArrowRight,
+  ShieldCheck,
 } from 'lucide-react';
 
 interface AdminDashboardProps {
   onViewReport: (reportId: string) => void;
   onNavigateToRekap: () => void;
   onNavigateToForm?: () => void;
+  onNavigateToCoordinators?: () => void;
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onViewReport,
   onNavigateToRekap,
   onNavigateToForm,
+  onNavigateToCoordinators,
 }) => {
   const [stats, setStats] = useState<DashboardAdminStats | null>(null);
   const [selectedDate, setSelectedDate] = useState<string>(
@@ -185,6 +190,63 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     : `${stats.today_not_filled_classes} kelas belum lapor`}
                 </span>
               </div>
+            </div>
+          </div>
+
+          {/* Koordinator Piket Aktif Card */}
+          <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200/80 shadow-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-start gap-4">
+                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
+                  stats.active_coordinator ? 'bg-indigo-50 text-indigo-700' : 'bg-slate-100 text-slate-400'
+                }`}>
+                  <UserCheck className="w-6 h-6" />
+                </div>
+                <div>
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                    Koordinator Piket Aktif
+                  </span>
+                  {stats.active_coordinator ? (
+                    <div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-base sm:text-lg font-black text-slate-900">
+                          Nama: {stats.active_coordinator.teacherName || stats.active_coordinator.teacher_name}
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-emerald-100 text-emerald-800">
+                          Aktif
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs font-medium text-slate-600 mt-1">
+                        <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                        <span>
+                          Periode: {stats.active_coordinator.startDate || stats.active_coordinator.start_date} – {stats.active_coordinator.endDate || stats.active_coordinator.end_date}
+                        </span>
+                        <span className="text-slate-300">•</span>
+                        <span>Tahun Ajaran {stats.active_coordinator.academicYear || stats.active_coordinator.academic_year} ({stats.active_coordinator.semester})</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-1">
+                      <p className="text-sm font-semibold text-slate-700">
+                        Belum ada Koordinator Piket aktif.
+                      </p>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        Tugaskan guru sebagai koordinator piket untuk memantau rekap harian sekolah.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {onNavigateToCoordinators && (
+                <button
+                  onClick={onNavigateToCoordinators}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-blue-700 hover:bg-blue-50 border border-blue-200 transition self-start sm:self-auto shrink-0"
+                >
+                  <span>Kelola Penugasan</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
           </div>
 

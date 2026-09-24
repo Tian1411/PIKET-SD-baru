@@ -39,14 +39,43 @@ export interface Teacher {
 export interface SchoolClass {
   id: string;
   class_name: string;
+  className?: string;
   grade: number;
+  section?: string; // 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H'
   academic_year: string;
+  academicYear?: string;
+  semester?: string;
   teacher_id?: string;
+  teacherId?: string;
   teacher_name?: string;
+  teacherName?: string;
   total_students?: number;
   status: UserStatus;
   created_at: string;
   updated_at: string;
+}
+
+export interface DutyCoordinator {
+  id: string;
+  teacherId: string;
+  teacherName: string;
+  academicYear: string;
+  semester: 'Ganjil' | 'Genap' | string;
+  status: 'active' | 'inactive';
+  startDate: string; // YYYY-MM-DD
+  endDate: string; // YYYY-MM-DD
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+  // Aliases for compatibility
+  teacher_id?: string;
+  teacher_name?: string;
+  academic_year?: string;
+  start_date?: string;
+  end_date?: string;
+  created_at?: string;
+  updated_at?: string;
+  created_by?: string;
 }
 
 export interface Student {
@@ -93,6 +122,10 @@ export interface DailyReport {
   academicYear?: string;
   cleanliness_status: CleanlinessStatus;
   cleanlinessStatus?: CleanlinessStatus;
+  coordinator_id?: string;
+  coordinatorId?: string;
+  coordinator_name?: string;
+  coordinatorName?: string;
   activity_notes: string[]; // ['Menyapu kelas', 'Membersihkan papan tulis', ...]
   activityNotes?: string[];
   incident_notes: string;
@@ -161,6 +194,7 @@ export interface DashboardAdminStats {
   today_permit: number;
   today_absent: number;
   today_not_filled_classes: number;
+  active_coordinator?: DutyCoordinator | null;
   today_status_list: {
     class_id: string;
     class_name: string;

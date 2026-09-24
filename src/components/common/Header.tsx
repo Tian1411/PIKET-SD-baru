@@ -15,6 +15,7 @@ import {
   Users,
   Building2,
   FileText,
+  UserCheck,
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -226,6 +227,18 @@ export const Header: React.FC<HeaderProps> = ({
                   >
                     <Users className="w-3.5 h-3.5" />
                     <span>Data Siswa</span>
+                  </button>
+
+                  <button
+                    onClick={() => onSelectTab('coordinators')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition whitespace-nowrap ${
+                      activeTab === 'coordinators'
+                        ? 'bg-blue-700 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                    }`}
+                  >
+                    <UserCheck className="w-3.5 h-3.5" />
+                    <span>Koordinator Piket</span>
                   </button>
 
                   <button

@@ -180,15 +180,21 @@ export const DetailLaporanModal: React.FC<DetailLaporanModalProps> = ({
           ) : report ? (
             <>
               {/* Meta Card */}
-              <div className="rounded-xl bg-slate-50 p-4 border border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+              <div className="rounded-xl bg-slate-50 p-4 border border-slate-200 grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
                 <div>
                   <span className="text-slate-500 block font-medium">Status Laporan</span>
                   <div className="mt-1">{statusBadge(report.status)}</div>
                 </div>
                 <div>
-                  <span className="text-slate-500 block font-medium">Guru Piket</span>
+                  <span className="text-slate-500 block font-medium">Guru Pengisi / Piket</span>
                   <span className="font-bold text-slate-800 mt-1 block truncate">
                     {report.teacher_name}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-500 block font-medium">Koordinator Piket</span>
+                  <span className="font-bold text-indigo-800 mt-1 block truncate">
+                    {report.coordinator_name || report.coordinatorName || '-'}
                   </span>
                 </div>
                 <div>

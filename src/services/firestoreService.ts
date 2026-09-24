@@ -23,6 +23,7 @@ import {
   AttendanceRecord,
   SchoolSettings,
   AuditLog,
+  DutyCoordinator,
   DashboardAdminStats,
   DashboardGuruStats,
   AttendanceStatus,
@@ -423,21 +424,78 @@ export async function createClass(
 ): Promise<{ message: string; class: SchoolClass }> {
   await ensureFirestoreSeeded();
   try {
-    if (!payload.class_name || !String(payload.class_name).trim()) {
-      throw new Error('Nama kelas wajib diisi.');
+    const rawGrade = Number(payload.grade);
+    let section = String(payload.section || '').trim().toUpperCase();
+    let rawClassName = String(payload.class_name || (payload as any).className || '').trim();
+
+    // If section not provided but class_name provided like "1 A" or "1B" or "I A"
+    if (!section && rawClassName) {
+      const matchSection = rawClassName.match(/[A-Za-z]+$/);
+      if (matchSection) {
+        section = matchSection[0].toUpperCase();
+      }
     }
-    const cleanName = String(payload.class_name).trim();
-    const grade = Number(payload.grade) || parseInt(cleanName.match(/\d+/)?.[0] || '1', 10);
-    const id = `cls_${cleanName.replace(/\s+/g, '_').toLowerCase()}_${Date.now().toString().slice(-4)}`;
+    section = section || 'A';
+
+    let grade = 1;
+    if (rawGrade >= 1 && rawGrade <= 6) {
+      grade = rawGrade;
+    } else {
+      const gMatch = rawClassName.match(/\d+/)?.[0];
+      if (gMatch) {
+        grade = parseInt(gMatch, 10);
+      } else {
+        const romanMatch = rawClassName.match(/^(VI|IV|V|III|II|I)/i)?.[0]?.toUpperCase();
+        const romanMap: Record<string, number> = { I: 1, II: 2, III: 3, IV: 4, V: 5, VI: 6 };
+        if (romanMatch && romanMap[romanMatch]) {
+          grade = romanMap[romanMatch];
+        }
+      }
+    }
+
+    const academicYear = payload.academic_year?.trim() || (payload as any).academicYear?.trim() || '2026/2027';
+    // Canonical name e.g. "1 A", "2 B", "3 C"
+    const cleanName = rawClassName || `${grade} ${section}`;
+
+    // DUPLICATE CHECK:
+    // "Jika Admin sudah memiliki 1 A dan mencoba membuat 1 A lagi pada tahun pelajaran ini:
+    // tolak dan tampilkan: 'Kelas 1 A sudah tersedia pada tahun pelajaran ini.'"
+    const classesSnap = await getDocs(
+      query(collection(db, 'classes'), where('status', '==', 'active'))
+    );
+    const existingClasses = classesSnap.docs.map((d) => d.data() as SchoolClass);
+
+    const isDuplicate = existingClasses.some((c) => {
+      const cYear = (c.academic_year || c.academicYear || '').trim();
+      if (cYear !== academicYear) return false;
+
+      const cSection = String(c.section || c.class_name?.match(/[A-Za-z]+$/)?.[0] || '').trim().toUpperCase();
+      if (c.grade === grade && cSection === section) return true;
+
+      const normalize = (s: string) => s.toLowerCase().replace(/kelas\s*/i, '').replace(/[^a-z0-9]/g, '');
+      return normalize(c.class_name || '') === normalize(cleanName);
+    });
+
+    if (isDuplicate) {
+      throw new Error(`Kelas ${cleanName} sudah tersedia pada tahun pelajaran ini.`);
+    }
+
+    const id = `cls_${grade}_${section.toLowerCase()}_${Date.now().toString().slice(-4)}`;
     const now = new Date().toISOString();
 
     const newClass: SchoolClass = {
       id,
       class_name: cleanName,
+      className: cleanName,
       grade,
-      academic_year: payload.academic_year?.trim() || '2026/2027',
+      section,
+      academic_year: academicYear,
+      academicYear,
+      semester: payload.semester || 'Ganjil',
       teacher_id: payload.teacher_id || undefined,
+      teacherId: payload.teacher_id || undefined,
       teacher_name: payload.teacher_name || undefined,
+      teacherName: payload.teacher_name || undefined,
       status: 'active',
       created_at: now,
       updated_at: now,
@@ -488,10 +546,47 @@ export async function updateClass(
 
     const current = currentSnap.data() as SchoolClass;
     const now = new Date().toISOString();
+
+    const targetGrade = payload.grade !== undefined ? Number(payload.grade) : current.grade;
+    const targetSection = (payload.section !== undefined ? String(payload.section) : (current.section || '')).trim().toUpperCase();
+    const targetYear = (payload.academic_year || payload.academicYear || current.academic_year || '2026/2027').trim();
+    const cleanName = payload.class_name?.trim() || (payload as any).className?.trim() || (targetSection ? `${targetGrade} ${targetSection}` : current.class_name);
+
+    // Duplicate check if name/grade/section/year changed
+    if (cleanName !== current.class_name || targetGrade !== current.grade || targetSection !== current.section || targetYear !== current.academic_year) {
+      const classesSnap = await getDocs(
+        query(collection(db, 'classes'), where('status', '==', 'active'))
+      );
+      const existingClasses = classesSnap.docs
+        .map((d) => d.data() as SchoolClass)
+        .filter((c) => c.id !== id);
+
+      const isDuplicate = existingClasses.some((c) => {
+        const cYear = (c.academic_year || c.academicYear || '').trim();
+        if (cYear !== targetYear) return false;
+
+        const cSection = String(c.section || c.class_name?.match(/[A-Za-z]+$/)?.[0] || '').trim().toUpperCase();
+        if (c.grade === targetGrade && cSection === targetSection && targetSection !== '') return true;
+
+        const normalize = (s: string) => s.toLowerCase().replace(/kelas\s*/i, '').replace(/[^a-z0-9]/g, '');
+        return normalize(c.class_name || '') === normalize(cleanName);
+      });
+
+      if (isDuplicate) {
+        throw new Error(`Kelas ${cleanName} sudah tersedia pada tahun pelajaran ini.`);
+      }
+    }
+
     const updated: SchoolClass = {
       ...current,
       ...payload,
       id,
+      class_name: cleanName,
+      className: cleanName,
+      grade: targetGrade,
+      section: targetSection || current.section,
+      academic_year: targetYear,
+      academicYear: targetYear,
       updated_at: now,
     };
 
@@ -573,6 +668,280 @@ export async function deleteClass(
     handleFirestoreError(error, OperationType.DELETE, `classes/${id}`);
     throw error;
   }
+}
+
+// -------------------------------------------------------------
+// DUTY COORDINATORS (KOORDINATOR PIKET)
+// -------------------------------------------------------------
+export async function getDutyCoordinators(): Promise<{ coordinators: DutyCoordinator[] }> {
+  await ensureFirestoreSeeded();
+  try {
+    const snap = await getDocs(collection(db, 'duty_coordinators'));
+    const coordinators = snap.docs.map((d) => {
+      const data = d.data();
+      return {
+        ...data,
+        id: d.id,
+        teacherId: data.teacherId || data.teacher_id,
+        teacherName: data.teacherName || data.teacher_name,
+        academicYear: data.academicYear || data.academic_year,
+        semester: data.semester,
+        status: data.status || 'active',
+        startDate: data.startDate || data.start_date,
+        endDate: data.endDate || data.end_date,
+        createdAt: data.createdAt || data.created_at,
+        updatedAt: data.updatedAt || data.updated_at,
+        createdBy: data.createdBy || data.created_by,
+        // compatibility aliases
+        teacher_id: data.teacherId || data.teacher_id,
+        teacher_name: data.teacherName || data.teacher_name,
+        academic_year: data.academicYear || data.academic_year,
+        start_date: data.startDate || data.start_date,
+        end_date: data.endDate || data.end_date,
+        created_at: data.createdAt || data.created_at,
+        updated_at: data.updatedAt || data.updated_at,
+        created_by: data.createdBy || data.created_by,
+      } as DutyCoordinator;
+    });
+
+    // Sort by startDate descending (newest first), then createdAt descending
+    coordinators.sort((a, b) => (b.startDate || b.createdAt || '').localeCompare(a.startDate || a.createdAt || ''));
+    return { coordinators };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, 'duty_coordinators');
+    return { coordinators: [] };
+  }
+}
+
+export async function getActiveDutyCoordinator(forDate?: string): Promise<DutyCoordinator | null> {
+  await ensureFirestoreSeeded();
+  try {
+    const { coordinators } = await getDutyCoordinators();
+    const activeList = coordinators.filter((c) => c.status === 'active');
+    if (activeList.length === 0) return null;
+
+    const targetDate = forDate || new Date().toISOString().split('T')[0];
+
+    // Find coordinator covering this specific date
+    const matching = activeList.find((c) => {
+      if (c.startDate && c.endDate) {
+        return c.startDate <= targetDate && c.endDate >= targetDate;
+      }
+      return false;
+    });
+
+    if (matching) return matching;
+
+    // Fallback to latest active coordinator if within reasonable range or first active
+    return activeList[0] || null;
+  } catch (error) {
+    return null;
+  }
+}
+
+export async function createDutyCoordinator(
+  payload: Partial<DutyCoordinator>,
+  adminUser?: { id: string; name: string; role: 'admin' | 'guru' }
+): Promise<{ message: string; coordinator: DutyCoordinator }> {
+  await ensureFirestoreSeeded();
+  try {
+    if (adminUser && adminUser.role !== 'admin') {
+      throw new Error('Akses ditolak: Hanya Administrator yang berwenang menentukan Koordinator Piket.');
+    }
+
+    const teacherId = String(payload.teacherId || payload.teacher_id || '').trim();
+    const academicYear = String(payload.academicYear || payload.academic_year || '').trim();
+    const semester = String(payload.semester || '').trim();
+    const startDate = String(payload.startDate || payload.start_date || '').trim();
+    const endDate = String(payload.endDate || payload.end_date || '').trim();
+    const status = payload.status || 'active';
+
+    if (!teacherId) throw new Error('Guru wajib dipilih.');
+    if (!academicYear) throw new Error('Tahun pelajaran wajib diisi.');
+    if (!semester) throw new Error('Semester wajib dipilih.');
+    if (!startDate || !endDate) throw new Error('Periode tanggal mulai dan selesai wajib diisi.');
+    if (endDate < startDate) {
+      throw new Error('Tanggal selesai tidak boleh lebih awal dari tanggal mulai.');
+    }
+
+    // Resolve accurate teacher name from teachers collection
+    const teacherDoc = await getDoc(doc(db, 'teachers', teacherId));
+    if (!teacherDoc.exists()) {
+      throw new Error('Data guru yang dipilih tidak ditemukan di sistem.');
+    }
+    const teacherName = (teacherDoc.data() as Teacher).name || payload.teacherName || 'Guru';
+
+    // Duplicate check:
+    // "Jika guru yang sama sudah menjadi koordinator aktif pada periode yang sama:
+    // tampilkan: 'Guru tersebut sudah memiliki penugasan sebagai Koordinator Piket pada periode ini.'"
+    const { coordinators: existingList } = await getDutyCoordinators();
+    const hasOverlap = existingList.some((c) => {
+      if (c.status !== 'active' || c.teacherId !== teacherId) return false;
+      const overlap = startDate <= c.endDate && endDate >= c.startDate;
+      const sameTerm = c.academicYear === academicYear && c.semester.toLowerCase() === semester.toLowerCase();
+      return overlap || sameTerm;
+    });
+
+    if (hasOverlap) {
+      throw new Error('Guru tersebut sudah memiliki penugasan sebagai Koordinator Piket pada periode ini.');
+    }
+
+    const id = `coord_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const now = new Date().toISOString();
+    const createdBy = adminUser?.name || 'Admin';
+
+    const newCoordinator: DutyCoordinator = {
+      id,
+      teacherId,
+      teacherName,
+      academicYear,
+      semester,
+      status,
+      startDate,
+      endDate,
+      createdAt: now,
+      updatedAt: now,
+      createdBy,
+      teacher_id: teacherId,
+      teacher_name: teacherName,
+      academic_year: academicYear,
+      start_date: startDate,
+      end_date: endDate,
+      created_at: now,
+      updated_at: now,
+      created_by: createdBy,
+    };
+
+    await setDoc(doc(db, 'duty_coordinators', id), newCoordinator);
+
+    if (adminUser) {
+      await logAudit(
+        adminUser.id,
+        adminUser.name,
+        adminUser.role,
+        'TAMBAH_KOORDINATOR_PIKET',
+        'duty_coordinators',
+        `Menugaskan ${teacherName} sebagai Koordinator Piket periode ${startDate} s/d ${endDate} (${academicYear} - ${semester})`,
+        id
+      );
+    }
+
+    return {
+      message: `Koordinator Piket ${teacherName} berhasil ditugaskan.`,
+      coordinator: newCoordinator,
+    };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, 'duty_coordinators');
+    throw error;
+  }
+}
+
+export async function updateDutyCoordinator(
+  id: string,
+  payload: Partial<DutyCoordinator>,
+  adminUser?: { id: string; name: string; role: 'admin' | 'guru' }
+): Promise<{ message: string; coordinator: DutyCoordinator }> {
+  await ensureFirestoreSeeded();
+  try {
+    if (adminUser && adminUser.role !== 'admin') {
+      throw new Error('Akses ditolak: Hanya Administrator yang berwenang mengubah Koordinator Piket.');
+    }
+
+    const coordRef = doc(db, 'duty_coordinators', id);
+    const snap = await getDoc(coordRef);
+    if (!snap.exists()) {
+      throw new Error('Data penugasan koordinator tidak ditemukan.');
+    }
+    const current = snap.data() as DutyCoordinator;
+
+    const teacherId = String(payload.teacherId || payload.teacher_id || current.teacherId).trim();
+    const academicYear = String(payload.academicYear || payload.academic_year || current.academicYear).trim();
+    const semester = String(payload.semester || current.semester).trim();
+    const startDate = String(payload.startDate || payload.start_date || current.startDate).trim();
+    const endDate = String(payload.endDate || payload.end_date || current.endDate).trim();
+    const status = payload.status || current.status || 'active';
+
+    if (endDate < startDate) {
+      throw new Error('Tanggal selesai tidak boleh lebih awal dari tanggal mulai.');
+    }
+
+    let teacherName = current.teacherName;
+    if (teacherId !== current.teacherId) {
+      const tDoc = await getDoc(doc(db, 'teachers', teacherId));
+      if (tDoc.exists()) {
+        teacherName = (tDoc.data() as Teacher).name;
+      }
+    }
+
+    // Overlap check excluding self
+    if (status === 'active') {
+      const { coordinators: existingList } = await getDutyCoordinators();
+      const hasOverlap = existingList.some((c) => {
+        if (c.id === id || c.status !== 'active' || c.teacherId !== teacherId) return false;
+        const overlap = startDate <= c.endDate && endDate >= c.startDate;
+        const sameTerm = c.academicYear === academicYear && c.semester.toLowerCase() === semester.toLowerCase();
+        return overlap || sameTerm;
+      });
+
+      if (hasOverlap) {
+        throw new Error('Guru tersebut sudah memiliki penugasan sebagai Koordinator Piket pada periode ini.');
+      }
+    }
+
+    const now = new Date().toISOString();
+    const updated: DutyCoordinator = {
+      ...current,
+      ...payload,
+      id,
+      teacherId,
+      teacherName,
+      academicYear,
+      semester,
+      startDate,
+      endDate,
+      status,
+      updatedAt: now,
+      teacher_id: teacherId,
+      teacher_name: teacherName,
+      academic_year: academicYear,
+      start_date: startDate,
+      end_date: endDate,
+      updated_at: now,
+    };
+
+    await setDoc(coordRef, updated);
+
+    if (adminUser) {
+      await logAudit(
+        adminUser.id,
+        adminUser.name,
+        adminUser.role,
+        'UBAH_KOORDINATOR_PIKET',
+        'duty_coordinators',
+        `Memperbarui penugasan Koordinator Piket ${teacherName} (${status})`,
+        id
+      );
+    }
+
+    return {
+      message: 'Penugasan Koordinator Piket berhasil diperbarui.',
+      coordinator: updated,
+    };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `duty_coordinators/${id}`);
+    throw error;
+  }
+}
+
+export async function toggleDutyCoordinatorStatus(
+  id: string,
+  newStatus: 'active' | 'inactive',
+  adminUser?: { id: string; name: string; role: 'admin' | 'guru' }
+): Promise<{ message: string }> {
+  await updateDutyCoordinator(id, { status: newStatus }, adminUser);
+  return {
+    message: `Status Koordinator Piket berhasil diubah menjadi ${newStatus === 'active' ? 'Aktif' : 'Tidak Aktif'}.`,
+  };
 }
 
 // -------------------------------------------------------------
@@ -1067,6 +1436,108 @@ export async function deleteStudent(
   }
 }
 
+export async function bulkDeleteStudentsByClass(
+  classId: string,
+  adminUser?: { id: string; name: string; role: 'admin' | 'guru' }
+): Promise<{ message: string; total: number; affectedCount: number; failedCount: number }> {
+  await ensureFirestoreSeeded();
+  try {
+    if (!adminUser || adminUser.role !== 'admin') {
+      throw new Error('Akses ditolak: Hanya Administrator yang berwenang menghapus seluruh data siswa per kelas.');
+    }
+
+    if (!classId) {
+      throw new Error('ID Kelas wajib ditentukan.');
+    }
+
+    const classDoc = await getDoc(doc(db, 'classes', classId));
+    if (!classDoc.exists()) {
+      throw new Error('Data kelas tidak ditemukan di sistem.');
+    }
+    const classData = classDoc.data() as SchoolClass;
+    const className = classData.class_name || classData.className || 'Kelas Terpilih';
+
+    // Query all active students in this class
+    const studentsQuery = query(
+      collection(db, 'students'),
+      where('class_id', '==', classId),
+      where('status', '==', 'active')
+    );
+    const snap = await getDocs(studentsQuery);
+    const total = snap.size;
+
+    if (total === 0) {
+      return {
+        message: `Tidak ada siswa aktif yang ditemukan di kelas ${className}.`,
+        total: 0,
+        affectedCount: 0,
+        failedCount: 0,
+      };
+    }
+
+    let affectedCount = 0;
+    let failedCount = 0;
+    const now = new Date().toISOString();
+
+    // Firestore batch writes max 500 operations per batch. We chunk safely at 400.
+    const docs = snap.docs;
+    const chunkSize = 400;
+
+    for (let i = 0; i < docs.length; i += chunkSize) {
+      const chunk = docs.slice(i, i + chunkSize);
+      const batch = writeBatch(db);
+
+      chunk.forEach((d) => {
+        batch.update(d.ref, {
+          status: 'inactive',
+          updated_at: now,
+          inactivated_reason: 'BULK_DELETE_PER_KELAS',
+          inactivated_by: adminUser.name,
+        });
+      });
+
+      try {
+        await batch.commit();
+        affectedCount += chunk.length;
+      } catch (batchErr) {
+        console.error('Error committing bulk student delete batch', batchErr);
+        failedCount += chunk.length;
+      }
+    }
+
+    if (affectedCount > 0) {
+      await logAudit(
+        adminUser.id,
+        adminUser.name,
+        adminUser.role,
+        'BULK_DELETE_STUDENTS',
+        'students',
+        `Admin menghapus ${affectedCount} siswa dari kelas ${className}.`,
+        classId
+      );
+    }
+
+    if (failedCount > 0) {
+      return {
+        message: `Penghapusan belum selesai. Berhasil: ${affectedCount}, Gagal: ${failedCount}. Silakan ulangi kembali.`,
+        total,
+        affectedCount,
+        failedCount,
+      };
+    }
+
+    return {
+      message: `Berhasil menghapus ${affectedCount} siswa dari kelas ${className}.`,
+      total,
+      affectedCount,
+      failedCount: 0,
+    };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `students/bulk/${classId}`);
+    throw error;
+  }
+}
+
 export async function importStudents(
   items: any[],
   adminUser?: { id: string; name: string; role: 'admin' | 'guru' },
@@ -1466,6 +1937,21 @@ export async function saveDailyReport(
     const totalStudents = attendance_items.length;
     const percentage = totalStudents > 0 ? Math.round((presentCount / totalStudents) * 100) : 0;
 
+    // Resolve active Duty Coordinator on this report date
+    let coordinatorId = payload.coordinator_id || (payload as any).coordinatorId || '';
+    let coordinatorName = payload.coordinator_name || (payload as any).coordinatorName || '';
+    if (!coordinatorId) {
+      try {
+        const activeCoord = await getActiveDutyCoordinator(date);
+        if (activeCoord) {
+          coordinatorId = activeCoord.teacherId || activeCoord.teacher_id || '';
+          coordinatorName = activeCoord.teacherName || activeCoord.teacher_name || '';
+        }
+      } catch (e) {
+        // non-blocking
+      }
+    }
+
     const reportData: DailyReport & any = {
       id: reportId,
       date,
@@ -1478,6 +1964,10 @@ export async function saveDailyReport(
       teacherId: effectiveTeacherId,
       teacher_name: teacherName,
       teacherName: teacherName,
+      coordinator_id: coordinatorId || undefined,
+      coordinatorId: coordinatorId || undefined,
+      coordinator_name: coordinatorName || undefined,
+      coordinatorName: coordinatorName || undefined,
       created_by: currentUser?.id || (payload as any).created_by || (payload as any).createdBy || effectiveTeacherId,
       createdBy: currentUser?.id || (payload as any).created_by || (payload as any).createdBy || effectiveTeacherId,
       semester: payload.semester || 'Ganjil',
@@ -1671,11 +2161,12 @@ export async function getAdminDashboardStats(dateQuery?: string): Promise<Dashbo
   try {
     const todayStr = dateQuery || new Date().toISOString().split('T')[0];
 
-    const [cRes, sRes, tRes, rRes] = await Promise.all([
+    const [cRes, sRes, tRes, rRes, activeCoord] = await Promise.all([
       getClasses(),
       getStudents(),
       getTeachers(),
       getDailyReports({ date: todayStr }),
+      getActiveDutyCoordinator(todayStr),
     ]);
 
     const activeClasses = cRes.classes;
@@ -1738,6 +2229,7 @@ export async function getAdminDashboardStats(dateQuery?: string): Promise<Dashbo
       today_permit: todayPermit,
       today_absent: todayAbsent,
       today_not_filled_classes: notFilledCount,
+      active_coordinator: activeCoord || null,
       today_status_list: todayStatusList,
     };
   } catch (error) {

@@ -45,6 +45,7 @@
         "id": { "type": "string" },
         "className": { "type": "string", "maxLength": 50 },
         "grade": { "type": "number" },
+        "section": { "type": "string", "maxLength": 10 },
         "academicYear": { "type": "string", "maxLength": 20 },
         "semester": { "type": "string", "maxLength": 20 },
         "teacherId": { "type": "string" },
@@ -88,6 +89,8 @@
         "semester": { "type": "string", "maxLength": 20 },
         "academicYear": { "type": "string", "maxLength": 20 },
         "cleanlinessStatus": { "type": "string", "maxLength": 30 },
+        "coordinatorId": { "type": "string" },
+        "coordinatorName": { "type": "string", "maxLength": 100 },
         "activityNotes": { "type": "array" },
         "incidentNotes": { "type": "string", "maxLength": 1000 },
         "followUp": { "type": "string", "maxLength": 1000 },
@@ -157,6 +160,25 @@
         "createdAt": { "type": "string" }
       },
       "required": ["id", "userId", "action", "description"]
+    },
+    "DutyCoordinator": {
+      "title": "DutyCoordinator",
+      "description": "Penugasan Koordinator Piket harian per periode",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "teacherName": { "type": "string", "maxLength": 100 },
+        "academicYear": { "type": "string", "maxLength": 20 },
+        "semester": { "type": "string", "enum": ["Ganjil", "Genap"] },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "startDate": { "type": "string", "maxLength": 10 },
+        "endDate": { "type": "string", "maxLength": 10 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "createdBy": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["id", "teacherId", "teacherName", "academicYear", "semester", "status", "startDate", "endDate"]
     }
   },
   "firestore": {
@@ -171,6 +193,10 @@
     "/classes/{classId}": {
       "schema": "SchoolClass",
       "description": "Data kelas"
+    },
+    "/duty_coordinators/{coordinatorId}": {
+      "schema": "DutyCoordinator",
+      "description": "Data penugasan koordinator piket"
     },
     "/students/{studentId}": {
       "schema": "Student",
