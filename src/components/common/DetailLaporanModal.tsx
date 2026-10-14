@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { DailyReport, SchoolSettings } from '../../types';
 import { api } from '../../services/api';
-import { exportSingleReportPDF, exportSingleReportToExcel } from '../../services/exportUtils';
+import { exportSingleReportPDF, exportSingleReportToExcel, formatIndonesianDate } from '../../services/exportUtils';
 import {
   X,
   Printer,
@@ -170,8 +170,8 @@ export const DetailLaporanModal: React.FC<DetailLaporanModalProps> = ({
               <h3 className="text-base font-bold text-slate-900 leading-tight">
                 Detail Laporan Piket Kelas {report?.class_name}
               </h3>
-              <p className="text-xs text-slate-500">
-                {report ? `${report.day_name}, ${report.date}` : 'Memuat data...'}
+              <p className="text-xs text-slate-500 font-medium">
+                {report ? `${report.day_name}, ${formatIndonesianDate(report.date)}` : 'Memuat data...'}
               </p>
             </div>
           </div>
