@@ -24,6 +24,7 @@ import {
   AttendanceRecord,
   SchoolSettings,
   AuditLog,
+  DutyCoordinator,
   DashboardAdminStats,
   DashboardGuruStats,
   AttendanceStatus,
@@ -171,6 +172,8 @@ export async function ensureFirestoreSeeded(): Promise<void> {
           name: "Noni Retman Nenot'ek, S.Pd",
           username: 'guru1',
           nip: '19820415 200801 2 018',
+          nuptk: '4539760662210082',
+          gender: 'P' as const,
           phone: '081234567891',
           className: 'V B',
         },
@@ -180,6 +183,8 @@ export async function ensureFirestoreSeeded(): Promise<void> {
           name: 'Maria Magdalena, S.Pd',
           username: 'guru2',
           nip: '19850620 201001 2 021',
+          nuptk: '7845763664210053',
+          gender: 'P' as const,
           phone: '081234567892',
           className: 'I A',
         },
@@ -189,6 +194,8 @@ export async function ensureFirestoreSeeded(): Promise<void> {
           name: 'Yohanes Bria, S.Pd',
           username: 'guru3',
           nip: '19800110 200604 1 009',
+          nuptk: '1238758660200043',
+          gender: 'L' as const,
           phone: '081234567893',
           className: 'VI A',
         },
@@ -198,6 +205,8 @@ export async function ensureFirestoreSeeded(): Promise<void> {
           name: 'Agustina Riwu, S.Pd.SD',
           username: 'guru4',
           nip: '19881105 201202 2 015',
+          nuptk: '9143766667220012',
+          gender: 'P' as const,
           phone: '081234567894',
           className: 'III A',
         },
@@ -207,6 +216,8 @@ export async function ensureFirestoreSeeded(): Promise<void> {
           name: 'Petrus Talan, S.Pd',
           username: 'guru5',
           nip: '19830722 200903 1 012',
+          nuptk: '3456761663200031',
+          gender: 'L' as const,
           phone: '081234567895',
           className: 'IV B',
         },
@@ -233,6 +244,8 @@ export async function ensureFirestoreSeeded(): Promise<void> {
           id: t.teacherId,
           user_id: t.userId,
           nip: t.nip,
+          nuptk: t.nuptk,
+          gender: t.gender,
           name: t.name,
           class_id: classId,
           class_name: t.className,
@@ -825,6 +838,8 @@ export async function createTeacher(
     const {
       name,
       nip,
+      nuptk,
+      gender,
       phone,
       email,
       username,
@@ -842,6 +857,8 @@ export async function createTeacher(
 
     const cleanName = String(name).trim();
     const cleanNip = nip && String(nip).trim() !== '' ? String(nip).trim() : '-';
+    const cleanNuptk = nuptk && String(nuptk).trim() !== '' ? String(nuptk).trim() : '';
+    const cleanGender = gender === 'L' || gender === 'P' ? gender : undefined;
     const cleanPhone = phone ? String(phone).trim() : '';
     const academicYear = academic_year?.trim() || '2026/2027';
 
@@ -935,6 +952,8 @@ export async function createTeacher(
       id: teacherId,
       user_id: userId,
       nip: cleanNip,
+      nuptk: cleanNuptk,
+      gender: cleanGender,
       name: cleanName,
       phone: cleanPhone,
       is_wali_kelas: Boolean(shouldAssign),
@@ -1030,6 +1049,8 @@ export async function updateTeacher(
     const {
       name,
       nip,
+      nuptk,
+      gender,
       phone,
       email,
       password,
@@ -1225,6 +1246,8 @@ export async function updateTeacher(
       ...currentTeacher,
       name: cleanName,
       nip: nip !== undefined ? (nip ? String(nip).trim() : '-') : (currentTeacher.nip || '-'),
+      nuptk: nuptk !== undefined ? (nuptk ? String(nuptk).trim() : '') : (currentTeacher.nuptk || ''),
+      gender: gender !== undefined ? (gender === 'L' || gender === 'P' ? gender : null) : (currentTeacher.gender || null),
       phone: phone !== undefined ? String(phone).trim() : (currentTeacher.phone || ''),
       class_id: finalClassId,
       class_name: finalClassName,
@@ -1558,6 +1581,63 @@ export async function deleteStudent(
   }
 }
 
+export async function bulkDeleteStudentsByClass(
+  classId: string,
+  adminUser?: { id: string; name: string; role: 'admin' | 'guru' }
+): Promise<{ message: string; count: number }> {
+  await ensureFirestoreSeeded();
+  if (adminUser && adminUser.role !== 'admin') {
+    throw new Error('Akses ditolak: Hanya Administrator yang berwenang menghapus data siswa.');
+  }
+
+  try {
+    const q = query(
+      collection(db, 'students'),
+      where('class_id', '==', classId),
+      where('status', '==', 'active')
+    );
+    const snap = await getDocs(q);
+    const count = snap.docs.length;
+
+    if (count === 0) {
+      return { message: 'Tidak ada siswa aktif di kelas ini.', count: 0 };
+    }
+
+    const now = new Date().toISOString();
+    const batch = writeBatch(db);
+    for (const d of snap.docs) {
+      batch.update(doc(db, 'students', d.id), {
+        status: 'inactive',
+        updated_at: now,
+      });
+    }
+
+    batch.update(doc(db, 'classes', classId), {
+      total_students: 0,
+      updated_at: now,
+    });
+
+    await batch.commit();
+
+    if (adminUser) {
+      await logAudit(
+        adminUser.id,
+        adminUser.name,
+        adminUser.role,
+        'HAPUS_SISWA_MASSAL',
+        'students',
+        `Menghapus massal ${count} siswa pada kelas ID: ${classId}`,
+        classId
+      );
+    }
+
+    return { message: `Berhasil menghapus ${count} data siswa dari kelas tersebut.`, count };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `students_class/${classId}`);
+    throw error;
+  }
+}
+
 export async function importStudents(
   items: any[],
   adminUser?: { id: string; name: string; role: 'admin' | 'guru' },
@@ -1852,11 +1932,88 @@ export async function getDailyReportById(id: string): Promise<{ report: DailyRep
     }
     const report = rSnap.data() as DailyReport;
 
-    // Fetch attendance items
-    const attSnap = await getDocs(
-      query(collection(db, 'attendance'), where('report_id', '==', id))
-    );
-    const attendance = attSnap.docs.map((d) => d.data() as AttendanceRecord);
+    // 1. Check if attendance is embedded on the report doc
+    let attendance: AttendanceRecord[] = Array.isArray(report.attendance) && report.attendance.length > 0
+      ? [...report.attendance]
+      : [];
+
+    // 2. If not embedded, load from attendance collection
+    if (attendance.length === 0) {
+      try {
+        const attSnap = await getDocs(
+          query(collection(db, 'attendance'), where('report_id', '==', id))
+        );
+        if (!attSnap.empty) {
+          attendance = attSnap.docs.map((d) => d.data() as AttendanceRecord);
+        }
+      } catch (attErr) {
+        console.warn('Could not fetch attendance collection:', attErr);
+      }
+    }
+
+    const effectiveClassId = report.class_id || (report as any).classId;
+
+    // 3. Fallback: If still empty but report has a class_id, fetch students of that class from Firestore
+    if (attendance.length === 0 && effectiveClassId) {
+      try {
+        const stdSnap = await getDocs(
+          query(collection(db, 'students'), where('class_id', '==', effectiveClassId))
+        );
+        if (!stdSnap.empty) {
+          const classStudents = stdSnap.docs.map((d) => d.data() as Student);
+          classStudents.sort((a, b) => a.name.localeCompare(b.name));
+          attendance = classStudents.map((s) => ({
+            id: `att_${id}_${s.id}`,
+            report_id: id,
+            student_id: s.id,
+            student_name: s.name,
+            student_nis: s.nis || '-',
+            student_nisn: s.nisn || '-',
+            student_gender: s.gender || 'L',
+            status: 'H',
+            note: '',
+          }));
+        }
+      } catch (stdErr) {
+        console.warn('Could not fallback fetch students for report:', stdErr);
+      }
+    }
+
+    // 4. Enrich missing student names or NIS from students collection
+    if (attendance.length > 0 && effectiveClassId) {
+      const needsEnrichment = attendance.some(
+        (a) => !a.student_name || a.student_name === 'Siswa' || !a.student_nis || a.student_nis === '-'
+      );
+      if (needsEnrichment) {
+        try {
+          const stdSnap = await getDocs(
+            query(collection(db, 'students'), where('class_id', '==', effectiveClassId))
+          );
+          if (!stdSnap.empty) {
+            const studentMap = new Map<string, Student>();
+            stdSnap.docs.forEach((d) => {
+              const s = d.data() as Student;
+              studentMap.set(s.id, s);
+            });
+            attendance = attendance.map((att) => {
+              const matchedStudent = studentMap.get(att.student_id);
+              if (matchedStudent) {
+                return {
+                  ...att,
+                  student_name: (att.student_name && att.student_name !== 'Siswa') ? att.student_name : matchedStudent.name,
+                  student_nis: (att.student_nis && att.student_nis !== '-') ? att.student_nis : (matchedStudent.nis || '-'),
+                  student_nisn: (att.student_nisn && att.student_nisn !== '-') ? att.student_nisn : (matchedStudent.nisn || '-'),
+                  student_gender: att.student_gender || matchedStudent.gender || 'L',
+                };
+              }
+              return att;
+            });
+          }
+        } catch (enrichErr) {
+          console.warn('Attendance student enrichment failed:', enrichErr);
+        }
+      }
+    }
 
     return {
       report: {
@@ -1957,6 +2114,23 @@ export async function saveDailyReport(
     const totalStudents = attendance_items.length;
     const percentage = totalStudents > 0 ? Math.round((presentCount / totalStudents) * 100) : 0;
 
+    // Normalize attendance records
+    const normalizedAttendance: AttendanceRecord[] = attendance_items.map((item: any) => {
+      const studentId = item.student_id || item.id || '';
+      const attId = `att_${reportId}_${studentId}`;
+      return {
+        id: attId,
+        report_id: reportId,
+        student_id: studentId,
+        student_name: item.student_name || item.name || 'Siswa',
+        student_nis: item.student_nis || item.nis ? String(item.student_nis || item.nis) : '-',
+        student_nisn: item.student_nisn || item.nisn ? String(item.student_nisn || item.nisn) : '-',
+        student_gender: (item.student_gender || item.gender || 'L') as any,
+        status: (item.status || 'H') as AttendanceStatus,
+        note: item.note ? String(item.note) : '',
+      };
+    });
+
     const reportData: DailyReport & any = {
       id: reportId,
       date,
@@ -1994,28 +2168,16 @@ export async function saveDailyReport(
       createdAt: payload.created_at || (payload as any).createdAt || now,
       updated_at: now,
       updatedAt: now,
+      attendance: normalizedAttendance,
     };
 
-    // ATOMIC BATCH WRITE: Report + All Attendance Records
+    // ATOMIC BATCH WRITE: Report (including embedded attendance) + Individual Attendance Records
     const batch = writeBatch(db);
     batch.set(doc(db, 'daily_reports', reportId), cleanFirestoreData(reportData));
 
-    // Save attendance items
-    attendance_items.forEach((item: any) => {
-      const studentId = item.student_id;
-      const attId = `att_${reportId}_${studentId}`;
-      const attRecord: AttendanceRecord = {
-        id: attId,
-        report_id: reportId,
-        student_id: studentId,
-        student_name: item.student_name || 'Siswa',
-        student_nis: item.student_nis ? String(item.student_nis) : '-',
-        student_nisn: item.student_nisn ? String(item.student_nisn) : '-',
-        student_gender: (item.student_gender || 'L') as any,
-        status: (item.status || 'H') as AttendanceStatus,
-        note: item.note ? String(item.note) : '',
-      };
-      batch.set(doc(db, 'attendance', attId), cleanFirestoreData(attRecord));
+    // Save individual attendance documents
+    normalizedAttendance.forEach((attRecord) => {
+      batch.set(doc(db, 'attendance', attRecord.id), cleanFirestoreData(attRecord));
     });
 
     await batch.commit();
@@ -2036,7 +2198,7 @@ export async function saveDailyReport(
       message: 'Laporan piket dan data kehadiran berhasil disimpan ke Firestore.',
       report: {
         ...reportData,
-        attendance: attendance_items,
+        attendance: normalizedAttendance,
       },
     };
   } catch (error) {
@@ -2157,16 +2319,229 @@ export async function deleteReport(
 // -------------------------------------------------------------
 // DASHBOARD STATS
 // -------------------------------------------------------------
+export async function getDutyCoordinators(): Promise<{ coordinators: DutyCoordinator[] }> {
+  await ensureFirestoreSeeded();
+  try {
+    const snap = await getDocs(collection(db, 'duty_coordinators'));
+    const list = snap.docs.map((d) => d.data() as DutyCoordinator);
+    list.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+    return { coordinators: list };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, 'duty_coordinators');
+    return { coordinators: [] };
+  }
+}
+
+export async function getActiveDutyCoordinator(): Promise<DutyCoordinator | null> {
+  await ensureFirestoreSeeded();
+  try {
+    const q = query(collection(db, 'duty_coordinators'), where('status', '==', 'active'));
+    const snap = await getDocs(q);
+    if (snap.empty) return null;
+    const list = snap.docs.map((d) => d.data() as DutyCoordinator);
+    list.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+    return list[0] || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+export async function createDutyCoordinator(
+  payload: any,
+  adminUser?: { id: string; name: string; role: 'admin' | 'guru' }
+): Promise<{ message: string; coordinator: DutyCoordinator }> {
+  await ensureFirestoreSeeded();
+  if (adminUser && adminUser.role !== 'admin') {
+    throw new Error('Akses ditolak: Hanya Administrator yang berwenang menugaskan koordinator.');
+  }
+
+  try {
+    const teacherId = payload.teacherId || payload.teacher_id;
+    if (!teacherId) throw new Error('Guru wajib dipilih.');
+
+    const teacherSnap = await getDoc(doc(db, 'teachers', teacherId));
+    if (!teacherSnap.exists()) throw new Error('Data guru tidak ditemukan.');
+    const teacher = teacherSnap.data() as Teacher;
+
+    const id = `coord_${Date.now()}`;
+    const now = new Date().toISOString();
+
+    const academicYear = payload.academicYear || payload.academic_year || '2026/2027';
+    const semester = payload.semester || 'Ganjil';
+    const startDate = payload.startDate || payload.start_date || '';
+    const endDate = payload.endDate || payload.end_date || '';
+    const status = payload.status || 'active';
+
+    const batch = writeBatch(db);
+
+    // If activating, deactivate other coordinators
+    if (status === 'active') {
+      const activeSnap = await getDocs(
+        query(collection(db, 'duty_coordinators'), where('status', '==', 'active'))
+      );
+      for (const d of activeSnap.docs) {
+        batch.update(doc(db, 'duty_coordinators', d.id), {
+          status: 'inactive',
+          updated_at: now,
+          updatedAt: now,
+        });
+      }
+    }
+
+    const newCoord: DutyCoordinator = {
+      id,
+      teacher_id: teacherId,
+      teacherId,
+      teacher_name: teacher.name,
+      teacherName: teacher.name,
+      teacher_nip: teacher.nip || '-',
+      teacherNip: teacher.nip || '-',
+      academic_year: academicYear,
+      academicYear,
+      semester,
+      start_date: startDate,
+      startDate,
+      end_date: endDate,
+      endDate,
+      status,
+      created_at: now,
+      createdAt: now,
+      updated_at: now,
+      updatedAt: now,
+    };
+
+    batch.set(doc(db, 'duty_coordinators', id), cleanFirestoreData(newCoord));
+    await batch.commit();
+
+    if (adminUser) {
+      await logAudit(
+        adminUser.id,
+        adminUser.name,
+        adminUser.role,
+        'TUGASKAN_KOORDINATOR_PIKET',
+        'duty_coordinators',
+        `Menugaskan ${teacher.name} sebagai Koordinator Piket (${startDate} s/d ${endDate})`,
+        id
+      );
+    }
+
+    return { message: 'Koordinator Piket berhasil ditugaskan.', coordinator: newCoord };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, 'duty_coordinators');
+    throw error;
+  }
+}
+
+export async function updateDutyCoordinator(
+  id: string,
+  payload: any,
+  adminUser?: { id: string; name: string; role: 'admin' | 'guru' }
+): Promise<{ message: string; coordinator: DutyCoordinator }> {
+  await ensureFirestoreSeeded();
+  if (adminUser && adminUser.role !== 'admin') {
+    throw new Error('Akses ditolak: Hanya Administrator yang berwenang mengubah koordinator.');
+  }
+
+  try {
+    const coordRef = doc(db, 'duty_coordinators', id);
+    const snap = await getDoc(coordRef);
+    if (!snap.exists()) throw new Error('Data koordinator tidak ditemukan.');
+    const current = snap.data() as DutyCoordinator;
+
+    const teacherId = payload.teacherId || payload.teacher_id || current.teacher_id;
+    let teacherName = current.teacher_name;
+    let teacherNip = current.teacher_nip;
+
+    if (teacherId !== current.teacher_id) {
+      const tSnap = await getDoc(doc(db, 'teachers', teacherId));
+      if (tSnap.exists()) {
+        const tData = tSnap.data() as Teacher;
+        teacherName = tData.name;
+        teacherNip = tData.nip || '-';
+      }
+    }
+
+    const now = new Date().toISOString();
+    const status = payload.status || current.status;
+    const batch = writeBatch(db);
+
+    if (status === 'active' && current.status !== 'active') {
+      const activeSnap = await getDocs(
+        query(collection(db, 'duty_coordinators'), where('status', '==', 'active'))
+      );
+      for (const d of activeSnap.docs) {
+        if (d.id !== id) {
+          batch.update(doc(db, 'duty_coordinators', d.id), {
+            status: 'inactive',
+            updated_at: now,
+            updatedAt: now,
+          });
+        }
+      }
+    }
+
+    const updated: DutyCoordinator = {
+      ...current,
+      teacher_id: teacherId,
+      teacherId,
+      teacher_name: teacherName,
+      teacherName,
+      teacher_nip: teacherNip,
+      teacherNip,
+      academic_year: payload.academicYear || payload.academic_year || current.academic_year,
+      academicYear: payload.academicYear || payload.academic_year || current.academic_year,
+      semester: payload.semester || current.semester,
+      start_date: payload.startDate || payload.start_date || current.start_date,
+      startDate: payload.startDate || payload.start_date || current.start_date,
+      end_date: payload.endDate || payload.end_date || current.end_date,
+      endDate: payload.endDate || payload.end_date || current.end_date,
+      status,
+      updated_at: now,
+      updatedAt: now,
+    };
+
+    batch.set(coordRef, cleanFirestoreData(updated));
+    await batch.commit();
+
+    if (adminUser) {
+      await logAudit(
+        adminUser.id,
+        adminUser.name,
+        adminUser.role,
+        'UBAH_KOORDINATOR_PIKET',
+        'duty_coordinators',
+        `Memperbarui penugasan Koordinator Piket: ${updated.teacher_name}`,
+        id
+      );
+    }
+
+    return { message: 'Penugasan koordinator berhasil diperbarui.', coordinator: updated };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `duty_coordinators/${id}`);
+    throw error;
+  }
+}
+
+export async function toggleDutyCoordinatorStatus(
+  id: string,
+  status: 'active' | 'inactive',
+  adminUser?: { id: string; name: string; role: 'admin' | 'guru' }
+): Promise<{ message: string }> {
+  await updateDutyCoordinator(id, { status }, adminUser);
+  return { message: `Status koordinator berhasil diubah ke ${status}.` };
+}
+
 export async function getAdminDashboardStats(dateQuery?: string): Promise<DashboardAdminStats> {
   await ensureFirestoreSeeded();
   try {
     const todayStr = dateQuery || new Date().toISOString().split('T')[0];
 
-    const [cRes, sRes, tRes, rRes] = await Promise.all([
+    const [cRes, sRes, tRes, rRes, activeCoordinator] = await Promise.all([
       getClasses(),
       getStudents(),
       getTeachers(),
       getDailyReports({ date: todayStr }),
+      getActiveDutyCoordinator(),
     ]);
 
     const activeClasses = cRes.classes;
@@ -2223,6 +2598,7 @@ export async function getAdminDashboardStats(dateQuery?: string): Promise<Dashbo
       total_classes: activeClasses.length,
       total_students: activeStudents.length,
       active_teachers: activeTeachers.length,
+      active_coordinator: activeCoordinator,
       reports_today: todayReports.length,
       today_present: todayPresent,
       today_sick: todaySick,

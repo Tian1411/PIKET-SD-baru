@@ -345,10 +345,13 @@ export const PenugasanKoordinator: React.FC = () => {
               <tbody className="divide-y divide-slate-100">
                 {filteredCoordinators.map((coord, idx) => {
                   const isActive = coord.status === 'active';
+                  const sDate = coord.startDate || coord.start_date || '';
+                  const eDate = coord.endDate || coord.end_date || '';
                   const isCurrent =
                     isActive &&
-                    coord.startDate <= todayStr &&
-                    coord.endDate >= todayStr;
+                    Boolean(sDate && eDate) &&
+                    sDate <= todayStr &&
+                    eDate >= todayStr;
 
                   return (
                     <tr

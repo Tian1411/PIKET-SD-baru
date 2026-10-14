@@ -9,6 +9,7 @@ import {
   DashboardGuruStats,
   SchoolSettings,
   AuditLog,
+  DutyCoordinator,
 } from '../types';
 import * as firestoreService from './firestoreService';
 
@@ -417,6 +418,18 @@ export const api = {
     );
   },
 
+  async bulkDeleteStudentsByClass(classId: string): Promise<{ message: string; count: number }> {
+    const currentUser = getCurrentStoredUser();
+    if (!currentUser || currentUser.role !== 'admin') {
+      throw new Error('Akses ditolak: Hanya Administrator yang berwenang menghapus siswa.');
+    }
+    return firestoreService.bulkDeleteStudentsByClass(classId, {
+      id: currentUser.id,
+      name: currentUser.name,
+      role: currentUser.role,
+    });
+  },
+
   // ---------------- DAILY REPORTS ----------------
   async getReports(params?: {
     class_id?: string;
@@ -465,7 +478,8 @@ export const api = {
     }
     const res = await firestoreService.getDailyReports({ class_id: classId, date });
     if (res.reports && res.reports.length > 0) {
-      return { exists: true, report: res.reports[0] };
+      const fullRes = await firestoreService.getDailyReportById(res.reports[0].id);
+      return { exists: true, report: fullRes.report };
     }
     return { exists: false };
   },
@@ -695,5 +709,46 @@ export const api = {
       settings: settingsRes.settings,
       reports: reportsRes.reports,
     };
+  },
+
+  // ---------------- DUTY COORDINATORS ----------------
+  async getDutyCoordinators(): Promise<{ coordinators: DutyCoordinator[] }> {
+    return firestoreService.getDutyCoordinators();
+  },
+
+  async createDutyCoordinator(payload: any): Promise<{ message: string; coordinator: DutyCoordinator }> {
+    const currentUser = getCurrentStoredUser();
+    if (!currentUser || currentUser.role !== 'admin') {
+      throw new Error('Akses ditolak: Hanya Administrator yang berwenang menugaskan koordinator.');
+    }
+    return firestoreService.createDutyCoordinator(payload, {
+      id: currentUser.id,
+      name: currentUser.name,
+      role: currentUser.role,
+    });
+  },
+
+  async updateDutyCoordinator(id: string, payload: any): Promise<{ message: string; coordinator: DutyCoordinator }> {
+    const currentUser = getCurrentStoredUser();
+    if (!currentUser || currentUser.role !== 'admin') {
+      throw new Error('Akses ditolak: Hanya Administrator yang berwenang mengubah koordinator.');
+    }
+    return firestoreService.updateDutyCoordinator(id, payload, {
+      id: currentUser.id,
+      name: currentUser.name,
+      role: currentUser.role,
+    });
+  },
+
+  async toggleDutyCoordinatorStatus(id: string, status: 'active' | 'inactive'): Promise<{ message: string }> {
+    const currentUser = getCurrentStoredUser();
+    if (!currentUser || currentUser.role !== 'admin') {
+      throw new Error('Akses ditolak: Hanya Administrator yang berwenang mengubah status koordinator.');
+    }
+    return firestoreService.toggleDutyCoordinatorStatus(id, status, {
+      id: currentUser.id,
+      name: currentUser.name,
+      role: currentUser.role,
+    });
   },
 };

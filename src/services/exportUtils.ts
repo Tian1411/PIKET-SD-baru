@@ -10,7 +10,7 @@ export function exportRekapToExcel(
 ) {
   const wb = XLSX.utils.book_new();
 
-  // Prepare metadata headers
+  // 1. Sheet 1: Rekapitulasi Laporan Piket
   const headerData = [
     [settings.school_name.toUpperCase()],
     ['REKAPITULASI LAPORAN PIKET HARIAN & KEHADIRAN SISWA'],
@@ -86,7 +86,6 @@ export function exportRekapToExcel(
   const sheetData = [...headerData, ...rowData, [], summaryRow];
   const ws = XLSX.utils.aoa_to_sheet(sheetData);
 
-  // Set column widths
   ws['!cols'] = [
     { wch: 5 }, // No
     { wch: 12 }, // Tanggal
@@ -106,7 +105,166 @@ export function exportRekapToExcel(
   ];
 
   XLSX.utils.book_append_sheet(wb, ws, 'Rekap Piket');
+
+  // 2. Sheet 2: Detail Presensi Siswa (if any report has attendance)
+  const detailAttendanceRows: any[] = [];
+  let attCounter = 1;
+
+  reports.forEach((rep) => {
+    if (rep.attendance && rep.attendance.length > 0) {
+      rep.attendance.forEach((att: any) => {
+        const studentNis = att.student_nis || att.nis || att.studentNis || '-';
+        const studentNisn = att.student_nisn || att.nisn || att.studentNisn || '-';
+        const studentName = att.student_name || att.name || att.studentName || 'Siswa';
+        const studentGender = att.student_gender || att.gender || att.studentGender || 'L';
+        const rawStatus = String(att.status || 'H').toUpperCase();
+        const statusLabel =
+          rawStatus === 'H'
+            ? 'Hadir'
+            : rawStatus === 'S'
+            ? 'Sakit'
+            : rawStatus === 'I'
+            ? 'Izin'
+            : rawStatus === 'A'
+            ? 'Alpa'
+            : rawStatus;
+
+        detailAttendanceRows.push([
+          attCounter++,
+          rep.date,
+          rep.day_name || '-',
+          rep.class_name || '-',
+          studentNis,
+          studentNisn,
+          studentName,
+          studentGender,
+          statusLabel,
+          att.note || '-',
+        ]);
+      });
+    }
+  });
+
+  if (detailAttendanceRows.length > 0) {
+    const detailHeaders = [
+      [settings.school_name.toUpperCase()],
+      ['DAFTAR PRESENSI SISWA - REKAPITULASI PIKET'],
+      [`Tahun Pelajaran: ${settings.academic_year} (${settings.semester})`],
+      [],
+      [
+        'No',
+        'Tanggal',
+        'Hari',
+        'Kelas',
+        'NIS',
+        'NISN',
+        'Nama Siswa',
+        'L/P',
+        'Status Kehadiran',
+        'Keterangan',
+      ],
+    ];
+
+    const detailSheetData = [...detailHeaders, ...detailAttendanceRows];
+    const wsDetail = XLSX.utils.aoa_to_sheet(detailSheetData);
+    wsDetail['!cols'] = [
+      { wch: 5 }, // No
+      { wch: 12 }, // Tanggal
+      { wch: 10 }, // Hari
+      { wch: 10 }, // Kelas
+      { wch: 14 }, // NIS
+      { wch: 16 }, // NISN
+      { wch: 30 }, // Nama Siswa
+      { wch: 8 }, // L/P
+      { wch: 16 }, // Status
+      { wch: 25 }, // Keterangan
+    ];
+    XLSX.utils.book_append_sheet(wb, wsDetail, 'Detail Presensi Siswa');
+  }
+
   const filename = `Rekap_Piket_${settings.school_name.replace(/\s+/g, '_')}_${Date.now()}.xlsx`;
+  XLSX.writeFile(wb, filename);
+}
+
+export function exportSingleReportToExcel(data: {
+  settings: SchoolSettings;
+  report: DailyReport;
+  teacher: { name: string; nip: string };
+  attendance: any[];
+}) {
+  const { settings, report, teacher, attendance } = data;
+  const wb = XLSX.utils.book_new();
+
+  const headerRows = [
+    [settings.school_name.toUpperCase()],
+    ['LAPORAN PIKET HARIAN & PRESENSI SISWA'],
+    [`${settings.address} | Telp: ${settings.phone} | NPSN: ${settings.npsn}`],
+    [],
+    ['Kelas', `: ${report.class_name}`, '', 'Semester', `: ${report.semester}`],
+    ['Hari / Tanggal', `: ${report.day_name}, ${report.date}`, '', 'Tahun Pelajaran', `: ${report.academic_year}`],
+    ['Guru Piket/Wali Kelas', `: ${teacher.name || report.teacher_name}`, '', 'Kebersihan', `: ${report.cleanliness_status}`],
+    ['Koordinator Piket', `: ${report.coordinator_name || report.coordinatorName || '-'}`, '', 'Status', `: ${report.status.toUpperCase()}`],
+    [],
+    ['RINGKASAN KEHADIRAN:'],
+    [
+      `Total: ${report.total_students} | Hadir: ${report.present_count} | Sakit: ${report.sick_count} | Izin: ${report.permit_count} | Alpa: ${report.absent_count} | Persentase Kehadiran: ${report.attendance_percentage}%`,
+    ],
+    [],
+    ['No', 'NIS', 'NISN', 'Nama Siswa', 'L/P', 'Status Kehadiran', 'Keterangan'],
+  ];
+
+  const studentRows = (attendance && attendance.length > 0)
+    ? attendance.map((att: any, idx: number) => {
+        const nis = att.student_nis || att.nis || att.studentNis || '-';
+        const nisn = att.student_nisn || att.nisn || att.studentNisn || '-';
+        const name = att.student_name || att.name || att.studentName || 'Siswa';
+        const gender = att.student_gender || att.gender || att.studentGender || 'L';
+        const rawStatus = String(att.status || 'H').toUpperCase();
+        const statusLabel =
+          rawStatus === 'H'
+            ? 'Hadir (H)'
+            : rawStatus === 'S'
+            ? 'Sakit (S)'
+            : rawStatus === 'I'
+            ? 'Izin (I)'
+            : rawStatus === 'A'
+            ? 'Alpa (A)'
+            : rawStatus;
+        const note = att.note || '-';
+        return [idx + 1, nis, nisn, name, gender, statusLabel, note];
+      })
+    : [['-', '-', '-', 'Tidak ada data siswa / presensi tercatat', '-', '-', '-']];
+
+  const footerRows = [
+    [],
+    ['Catatan Kejadian Khusus:', report.incident_notes || 'Tidak ada kejadian khusus.'],
+    ['Tindak Lanjut:', report.follow_up || 'Tidak ada tindak lanjut khusus.'],
+    ['Kegiatan Piket Terlaksana:', Array.isArray(report.activity_notes) ? report.activity_notes.join(', ') : '-'],
+    [],
+    ['', '', '', '', `Kupang, ${report.date}`],
+    ['Mengetahui,', '', '', '', 'Guru Piket / Wali Kelas'],
+    ['Kepala Sekolah,', '', '', '', ''],
+    [],
+    [],
+    [settings.principal_name, '', '', '', teacher.name || report.teacher_name || 'Guru Piket'],
+    [`NIP. ${settings.principal_nip}`, '', '', '', `NIP. ${teacher.nip || '-'}`],
+  ];
+
+  const sheetData = [...headerRows, ...studentRows, ...footerRows];
+  const ws = XLSX.utils.aoa_to_sheet(sheetData);
+
+  ws['!cols'] = [
+    { wch: 6 }, // No
+    { wch: 14 }, // NIS
+    { wch: 16 }, // NISN
+    { wch: 32 }, // Nama Siswa
+    { wch: 8 }, // L/P
+    { wch: 18 }, // Status
+    { wch: 30 }, // Keterangan
+  ];
+
+  XLSX.utils.book_append_sheet(wb, ws, `Piket ${report.class_name || 'Kelas'}`);
+  const filename = `Laporan_Piket_${report.class_name?.replace(/\s+/g, '_')}_${report.date}.xlsx`;
   XLSX.writeFile(wb, filename);
 }
 
@@ -134,6 +292,7 @@ export async function exportSingleReportPDF(data: {
   });
 
   const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
 
   // Try to load school logo
   const logoSrc = settings.logo_url || '/school-logo.png';
@@ -202,19 +361,39 @@ export async function exportSingleReportPDF(data: {
   doc.text(`Kebersihan Kelas`, metaRightX, metaY);
   doc.text(`: ${report.cleanliness_status}`, metaRightX + 32, metaY);
 
+  if (report.coordinator_name || report.coordinatorName) {
+    metaY += 5;
+    doc.text(`Koordinator Piket`, metaLeftX, metaY);
+    doc.text(`: ${report.coordinator_name || report.coordinatorName}`, metaLeftX + 28, metaY);
+  }
+
   // === TABEL KEHADIRAN SISWA ===
-  const tableRows = attendance.map((att, idx) => [
-    idx + 1,
-    att.nis || '-',
-    att.nisn || '-',
-    att.name || '-',
-    att.gender || 'L',
-    att.status || 'H',
-    att.note || '-',
-  ]);
+  const tableRows = (attendance && attendance.length > 0)
+    ? attendance.map((att: any, idx: number) => {
+        const nis = att.student_nis || att.nis || att.studentNis || '-';
+        const nisn = att.student_nisn || att.nisn || att.studentNisn || '-';
+        const name = att.student_name || att.name || att.studentName || 'Siswa';
+        const gender = att.student_gender || att.gender || att.studentGender || 'L';
+        const rawStatus = String(att.status || 'H').toUpperCase();
+        const statusLabel =
+          rawStatus === 'H'
+            ? 'Hadir (H)'
+            : rawStatus === 'S'
+            ? 'Sakit (S)'
+            : rawStatus === 'I'
+            ? 'Izin (I)'
+            : rawStatus === 'A'
+            ? 'Alpa (A)'
+            : rawStatus;
+        const note = att.note || '-';
+        return [idx + 1, nis, nisn, name, gender, statusLabel, note];
+      })
+    : [
+        ['-', '-', '-', 'Tidak ada data presensi siswa yang tersimpan.', '-', '-', '-'],
+      ];
 
   autoTable(doc, {
-    startY: metaY + 8,
+    startY: metaY + 7,
     head: [['No', 'NIS', 'NISN', 'Nama Siswa', 'L/P', 'Status', 'Keterangan']],
     body: tableRows,
     theme: 'grid',
@@ -234,9 +413,9 @@ export async function exportSingleReportPDF(data: {
       0: { halign: 'center', cellWidth: 10 },
       1: { halign: 'center', cellWidth: 18 },
       2: { halign: 'center', cellWidth: 26 },
-      3: { cellWidth: 60 },
+      3: { cellWidth: 58 },
       4: { halign: 'center', cellWidth: 12 },
-      5: { halign: 'center', cellWidth: 16 },
+      5: { halign: 'center', cellWidth: 20 },
       6: { cellWidth: 'auto' },
     },
     margin: { left: 14, right: 14 },
@@ -276,7 +455,13 @@ export async function exportSingleReportPDF(data: {
   }
 
   // TANDA TANGAN RESMI
-  const signY = Math.max(afterNotesY + 8, 230);
+  let signY = afterNotesY + 8;
+  if (signY + 40 > pageHeight - 12) {
+    doc.addPage();
+    signY = 25;
+  } else {
+    signY = Math.max(signY, pageHeight - 55);
+  }
 
   doc.setFont('Helvetica', 'normal');
   doc.setFontSize(9);

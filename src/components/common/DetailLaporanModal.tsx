@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { DailyReport, SchoolSettings } from '../../types';
 import { api } from '../../services/api';
-import { exportSingleReportPDF } from '../../services/exportUtils';
+import { exportSingleReportPDF, exportSingleReportToExcel } from '../../services/exportUtils';
 import {
   X,
   Printer,
   FileDown,
+  FileSpreadsheet,
   Lock,
   Unlock,
   CheckCircle2,
@@ -49,20 +50,23 @@ export const DetailLaporanModal: React.FC<DetailLaporanModalProps> = ({
       setIsLoading(true);
       setErrorMsg('');
       try {
-        if (isAdmin) {
-          const res = await api.getReportPdfData(reportId);
-          setReport(res.report);
-          setAttendance(res.attendance);
-          setTeacher(res.teacher);
-          setSettings(res.settings);
-        } else {
-          const res = await api.getReportDetail(reportId);
-          setReport(res.report);
-          setAttendance(res.report.attendance || []);
-          setTeacher({ name: res.report.teacher_name, nip: '-' });
-        }
+        const res = await api.getReportPdfData(reportId);
+        setReport(res.report);
+        setAttendance(res.attendance || res.report.attendance || []);
+        setTeacher(res.teacher || { name: res.report.teacher_name, nip: '-' });
+        setSettings(res.settings);
       } catch (err: any) {
-        setErrorMsg(err.message || 'Gagal memuat detail laporan.');
+        // Fallback to getReportDetail
+        try {
+          const detailRes = await api.getReportDetail(reportId);
+          setReport(detailRes.report);
+          setAttendance(detailRes.report.attendance || []);
+          setTeacher({ name: detailRes.report.teacher_name, nip: '-' });
+          const setRes = await api.getSettings();
+          setSettings(setRes.settings);
+        } catch (innerErr: any) {
+          setErrorMsg(err.message || 'Gagal memuat detail laporan.');
+        }
       } finally {
         setIsLoading(false);
       }
@@ -81,6 +85,20 @@ export const DetailLaporanModal: React.FC<DetailLaporanModalProps> = ({
       teacher: teacher || { name: report.teacher_name, nip: '-' },
       attendance,
     });
+  };
+
+  const handleExportExcel = () => {
+    if (!report || !settings) return;
+    exportSingleReportToExcel({
+      settings,
+      report,
+      teacher: teacher || { name: report.teacher_name, nip: '-' },
+      attendance,
+    });
+  };
+
+  const handlePrint = () => {
+    window.print();
   };
 
   const handleToggleLock = async () => {
@@ -268,42 +286,63 @@ export const DetailLaporanModal: React.FC<DetailLaporanModalProps> = ({
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {attendance.map((att, idx) => (
-                          <tr key={idx} className="hover:bg-slate-50/80">
-                            <td className="py-2 px-3 text-center text-slate-500">{idx + 1}</td>
-                            <td className="py-2 px-3 font-semibold text-slate-800">
-                              {att.student_name || att.name}
-                              <span className="block text-[10px] text-slate-400 font-mono">
-                                NIS: {att.student_nis || att.nis}
-                              </span>
+                        {attendance.length > 0 ? (
+                          attendance.map((att, idx) => {
+                            const studentName = att.student_name || att.name || 'Siswa';
+                            const studentNis = att.student_nis || att.nis || '-';
+                            const studentNisn = att.student_nisn || att.nisn || '-';
+                            const studentGender = att.student_gender || att.gender || 'L';
+                            const rawStatus = String(att.status || 'H').toUpperCase();
+                            return (
+                              <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
+                                <td className="py-2.5 px-3 text-center text-slate-500 font-medium">{idx + 1}</td>
+                                <td className="py-2.5 px-3 font-semibold text-slate-800">
+                                  {studentName}
+                                  <span className="block text-[10px] text-slate-400 font-mono mt-0.5">
+                                    NIS: {studentNis} {studentNisn !== '-' && `| NISN: ${studentNisn}`}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3 text-center font-bold text-slate-600">
+                                  <span
+                                    className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                      studentGender === 'L' ? 'bg-blue-50 text-blue-700' : 'bg-pink-50 text-pink-700'
+                                    }`}
+                                  >
+                                    {studentGender}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3 text-center">
+                                  <span
+                                    className={`inline-block px-2 py-0.5 rounded-md font-extrabold text-[11px] ${
+                                      rawStatus === 'H'
+                                        ? 'bg-emerald-100 text-emerald-800'
+                                        : rawStatus === 'S'
+                                        ? 'bg-amber-100 text-amber-800'
+                                        : rawStatus === 'I'
+                                        ? 'bg-sky-100 text-sky-800'
+                                        : 'bg-rose-100 text-rose-800'
+                                    }`}
+                                  >
+                                    {rawStatus === 'H'
+                                      ? 'HADIR'
+                                      : rawStatus === 'S'
+                                      ? 'SAKIT'
+                                      : rawStatus === 'I'
+                                      ? 'IZIN'
+                                      : 'ALPA'}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3 text-slate-600">{att.note || '-'}</td>
+                              </tr>
+                            );
+                          })
+                        ) : (
+                          <tr>
+                            <td colSpan={5} className="py-8 text-center text-slate-400 text-xs">
+                              Tidak ada data presensi siswa yang tersimpan untuk laporan ini.
                             </td>
-                            <td className="py-2 px-3 text-center font-bold text-slate-600">
-                              {att.student_gender || att.gender}
-                            </td>
-                            <td className="py-2 px-3 text-center">
-                              <span
-                                className={`inline-block px-2 py-0.5 rounded-md font-extrabold text-[11px] ${
-                                  att.status === 'H'
-                                    ? 'bg-emerald-100 text-emerald-800'
-                                    : att.status === 'S'
-                                    ? 'bg-amber-100 text-amber-800'
-                                    : att.status === 'I'
-                                    ? 'bg-sky-100 text-sky-800'
-                                    : 'bg-rose-100 text-rose-800'
-                                }`}
-                              >
-                                {att.status === 'H'
-                                  ? 'HADIR'
-                                  : att.status === 'S'
-                                  ? 'SAKIT'
-                                  : att.status === 'I'
-                                  ? 'IZIN'
-                                  : 'ALPA'}
-                              </span>
-                            </td>
-                            <td className="py-2 px-3 text-slate-600">{att.note || '-'}</td>
                           </tr>
-                        ))}
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -372,7 +411,7 @@ export const DetailLaporanModal: React.FC<DetailLaporanModalProps> = ({
             Tutup
           </button>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             {/* Guru can edit if not locked */}
             {!isAdmin && onEdit && report && report.status !== 'locked' && (
               <button
@@ -380,46 +419,70 @@ export const DetailLaporanModal: React.FC<DetailLaporanModalProps> = ({
                   onClose();
                   onEdit(report);
                 }}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-xs font-bold text-white shadow-sm transition"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-xs font-bold text-white shadow-xs transition"
               >
                 <Edit3 className="w-3.5 h-3.5" />
                 <span>Ubah Laporan</span>
               </button>
             )}
 
-            {/* Admin only actions */}
+            {/* Admin toggle lock */}
             {isAdmin && report && (
+              <button
+                onClick={handleToggleLock}
+                disabled={actionLoading}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition ${
+                  report.status === 'locked'
+                    ? 'bg-amber-100 hover:bg-amber-200 text-amber-800'
+                    : 'bg-slate-200 hover:bg-slate-300 text-slate-800'
+                }`}
+                title={report.status === 'locked' ? 'Buka Kunci Laporan' : 'Kunci Laporan'}
+              >
+                {report.status === 'locked' ? (
+                  <>
+                    <Unlock className="w-3.5 h-3.5" />
+                    <span>Buka Kunci</span>
+                  </>
+                ) : (
+                  <>
+                    <Lock className="w-3.5 h-3.5" />
+                    <span>Kunci Laporan</span>
+                  </>
+                )}
+              </button>
+            )}
+
+            {/* Export and Print actions available to both Admin and Teachers */}
+            {report && (
               <>
                 <button
-                  onClick={handleToggleLock}
-                  disabled={actionLoading}
-                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition ${
-                    report.status === 'locked'
-                      ? 'bg-amber-100 hover:bg-amber-200 text-amber-800'
-                      : 'bg-slate-200 hover:bg-slate-300 text-slate-800'
-                  }`}
-                  title={report.status === 'locked' ? 'Buka Kunci Laporan' : 'Kunci Laporan'}
+                  id="btn-modal-print"
+                  onClick={handlePrint}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-xs font-bold text-white shadow-xs transition"
+                  title="Cetak Laporan Resmi"
                 >
-                  {report.status === 'locked' ? (
-                    <>
-                      <Unlock className="w-3.5 h-3.5" />
-                      <span>Buka Kunci</span>
-                    </>
-                  ) : (
-                    <>
-                      <Lock className="w-3.5 h-3.5" />
-                      <span>Kunci Laporan</span>
-                    </>
-                  )}
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Cetak</span>
+                </button>
+
+                <button
+                  id="btn-modal-export-excel"
+                  onClick={handleExportExcel}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-xs font-bold text-white shadow-xs transition"
+                  title="Unduh Laporan dalam format Excel"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  <span>Unduh Excel</span>
                 </button>
 
                 <button
                   id="btn-modal-export-pdf"
                   onClick={handleExportPDF}
-                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-xs font-bold text-white shadow-sm transition"
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-xs font-bold text-white shadow-xs transition"
+                  title="Unduh Laporan dalam format PDF"
                 >
                   <FileDown className="w-3.5 h-3.5" />
-                  <span>Download PDF</span>
+                  <span>Unduh PDF</span>
                 </button>
               </>
             )}

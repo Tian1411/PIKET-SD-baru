@@ -179,6 +179,25 @@
         "createdAt": { "type": "string" }
       },
       "required": ["id", "userId", "action", "description"]
+    },
+    "DutyCoordinator": {
+      "title": "DutyCoordinator",
+      "description": "Penugasan guru sebagai Koordinator Piket per semester / tahun pelajaran",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "teacherName": { "type": "string", "maxLength": 100 },
+        "teacherNip": { "type": "string", "maxLength": 30 },
+        "academicYear": { "type": "string", "maxLength": 20 },
+        "semester": { "type": "string", "enum": ["Ganjil", "Genap"] },
+        "startDate": { "type": "string" },
+        "endDate": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "teacherId", "teacherName", "academicYear", "semester", "status"]
     }
   },
   "firestore": {
@@ -217,6 +236,10 @@
     "/audit_logs/{logId}": {
       "schema": "AuditLog",
       "description": "Log aktivitas sistem"
+    },
+    "/duty_coordinators/{coordinatorId}": {
+      "schema": "DutyCoordinator",
+      "description": "Penugasan koordinator piket sekolah"
     }
   }
 }

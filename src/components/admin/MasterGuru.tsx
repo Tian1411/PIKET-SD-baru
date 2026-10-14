@@ -42,6 +42,8 @@ export const MasterGuru: React.FC<MasterGuruProps> = ({ onNavigateToClasses }) =
   // Form Fields
   const [name, setName] = useState('');
   const [nip, setNip] = useState('');
+  const [nuptk, setNuptk] = useState('');
+  const [gender, setGender] = useState<'L' | 'P' | ''>('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
@@ -144,6 +146,8 @@ export const MasterGuru: React.FC<MasterGuruProps> = ({ onNavigateToClasses }) =
     setEditingTeacher(null);
     setName('');
     setNip('');
+    setNuptk('');
+    setGender('');
     setPhone('');
     setEmail('');
     setUsername('');
@@ -174,6 +178,8 @@ export const MasterGuru: React.FC<MasterGuruProps> = ({ onNavigateToClasses }) =
     setEditingTeacher(t);
     setName(t.name);
     setNip(t.nip || '');
+    setNuptk(t.nuptk || '');
+    setGender((t.gender as any) || '');
     setPhone(t.phone || '');
     setEmail((t as any).email || '');
     setUsername((t as any).username || '');
@@ -186,7 +192,10 @@ export const MasterGuru: React.FC<MasterGuruProps> = ({ onNavigateToClasses }) =
     if (hasAssignment && t.class_id) {
       setInitialClassId(t.class_id);
       const assignedClass = classes.find((c) => c.id === t.class_id);
-      const parsed = extractGradeAndSection(assignedClass?.class_name || t.class_name || '', assignedClass?.grade || t.grade);
+      const parsed = extractGradeAndSection(
+        assignedClass?.class_name || t.class_name || '',
+        assignedClass?.grade || t.grade || undefined
+      );
       const g = String(t.grade || assignedClass?.grade || parsed.grade || '');
       const s = (t.section || assignedClass?.section || parsed.section || '').toUpperCase();
 
@@ -294,6 +303,8 @@ export const MasterGuru: React.FC<MasterGuruProps> = ({ onNavigateToClasses }) =
         const updatePayload: any = {
           name: name.trim(),
           nip: nip.trim(),
+          nuptk: nuptk.trim(),
+          gender: gender || null,
           phone: phone.trim(),
           email: email.trim(),
           is_wali_kelas: isWaliKelas,
@@ -324,6 +335,8 @@ export const MasterGuru: React.FC<MasterGuruProps> = ({ onNavigateToClasses }) =
         const createPayload: any = {
           name: cleanName,
           nip: nip.trim() || '-',
+          nuptk: nuptk.trim() || '',
+          gender: gender || undefined,
           phone: phone.trim(),
           email: email.trim() || `${cleanUser}@sdnoehendak.sch.id`,
           username: cleanUser,
@@ -407,7 +420,8 @@ export const MasterGuru: React.FC<MasterGuruProps> = ({ onNavigateToClasses }) =
                 <tr>
                   <th className="py-3 px-3 w-10 text-center">No</th>
                   <th className="py-3 px-3">Nama Lengkap & Gelar</th>
-                  <th className="py-3 px-3">NIP</th>
+                  <th className="py-3 px-3">NIP / NUPTK</th>
+                  <th className="py-3 px-3 text-center">L/P</th>
                   <th className="py-3 px-3">Kelas</th>
                   <th className="py-3 px-3">Status Wali Kelas</th>
                   <th className="py-3 px-3">Username Login</th>
@@ -433,7 +447,39 @@ export const MasterGuru: React.FC<MasterGuruProps> = ({ onNavigateToClasses }) =
                           </span>
                         )}
                       </td>
-                      <td className="py-3.5 px-3 text-slate-600 font-mono text-[11px]">{t.nip || '-'}</td>
+                      <td className="py-3.5 px-3">
+                        <div className="space-y-0.5">
+                          <div className="text-[11px] font-mono text-slate-700">
+                            <span className="text-[10px] text-slate-400 font-sans mr-1">NIP:</span>
+                            {t.nip || '-'}
+                          </div>
+                          {t.nuptk && (
+                            <div className="text-[11px] font-mono text-slate-600">
+                              <span className="text-[10px] text-slate-400 font-sans mr-1">NUPTK:</span>
+                              {t.nuptk}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3.5 px-3 text-center">
+                        {t.gender === 'L' ? (
+                          <span
+                            className="inline-block px-2 py-0.5 rounded-md text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200"
+                            title="Laki-laki"
+                          >
+                            L
+                          </span>
+                        ) : t.gender === 'P' ? (
+                          <span
+                            className="inline-block px-2 py-0.5 rounded-md text-[11px] font-bold bg-pink-50 text-pink-700 border border-pink-200"
+                            title="Perempuan"
+                          >
+                            P
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 font-mono">-</span>
+                        )}
+                      </td>
                       <td className="py-3.5 px-3">
                         {hasWali && t.class_name ? (
                           <span className="inline-block px-2.5 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-800 border border-blue-200 shadow-2xs">
@@ -529,17 +575,71 @@ export const MasterGuru: React.FC<MasterGuruProps> = ({ onNavigateToClasses }) =
                 />
               </div>
 
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    NIP Guru (Nomor Induk Pegawai)
+                  </label>
+                  <input
+                    type="text"
+                    value={nip}
+                    onChange={(e) => setNip(e.target.value)}
+                    placeholder="19840214 200801 2 007 (atau '-')"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    NUPTK
+                  </label>
+                  <input
+                    type="text"
+                    value={nuptk}
+                    onChange={(e) => setNuptk(e.target.value)}
+                    placeholder="Contoh: 4539760662210082"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 font-mono"
+                  />
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  NIP Guru (Nomor Induk Pegawai)
+                  Jenis Kelamin
                 </label>
-                <input
-                  type="text"
-                  value={nip}
-                  onChange={(e) => setNip(e.target.value)}
-                  placeholder="19840214 200801 2 007 (atau '-' jika belum ada)"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 font-mono"
-                />
+                <div className="flex items-center gap-5 pt-1">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-700">
+                    <input
+                      type="radio"
+                      name="teacher-gender"
+                      value="L"
+                      checked={gender === 'L'}
+                      onChange={() => setGender('L')}
+                      className="w-4 h-4 text-blue-600 focus:ring-blue-500 border-slate-300 cursor-pointer"
+                    />
+                    <span>Laki-laki (L)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-700">
+                    <input
+                      type="radio"
+                      name="teacher-gender"
+                      value="P"
+                      checked={gender === 'P'}
+                      onChange={() => setGender('P')}
+                      className="w-4 h-4 text-pink-600 focus:ring-pink-500 border-slate-300 cursor-pointer"
+                    />
+                    <span>Perempuan (P)</span>
+                  </label>
+                  {gender && (
+                    <button
+                      type="button"
+                      onClick={() => setGender('')}
+                      className="text-[11px] text-slate-400 hover:text-slate-600 underline cursor-pointer"
+                    >
+                      Batal Pilih
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* ---------------- SECTION: PENUGASAN WALI KELAS ---------------- */}

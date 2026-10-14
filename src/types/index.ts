@@ -66,15 +66,41 @@ export interface Teacher {
 export interface SchoolClass {
   id: string;
   class_name: string;
+  className?: string;
   grade: number;
   section?: string;
   academic_year: string;
+  academicYear?: string;
   teacher_id?: string;
   teacher_name?: string;
   total_students?: number;
   status: UserStatus;
   created_at: string;
   updated_at: string;
+}
+
+export interface DutyCoordinator {
+  id: string;
+  teacher_id: string;
+  teacherId?: string;
+  teacher_name: string;
+  teacherName?: string;
+  teacher_nip?: string;
+  teacherNip?: string;
+  academic_year: string;
+  academicYear?: string;
+  semester: 'Ganjil' | 'Genap';
+  start_date: string;
+  startDate?: string;
+  end_date: string;
+  endDate?: string;
+  status: 'active' | 'inactive';
+  created_by?: string;
+  createdBy?: string;
+  created_at: string;
+  createdAt?: string;
+  updated_at: string;
+  updatedAt?: string;
 }
 
 export interface Student {
@@ -114,6 +140,8 @@ export interface DailyReport {
   teacherId?: string;
   teacher_name?: string;
   teacherName?: string;
+  coordinator_name?: string;
+  coordinatorName?: string;
   created_by?: string;
   createdBy?: string;
   semester: string; // 'Ganjil' | 'Genap'
@@ -183,6 +211,7 @@ export interface DashboardAdminStats {
   total_classes: number;
   total_students: number;
   active_teachers: number;
+  active_coordinator?: DutyCoordinator | null;
   reports_today: number;
   today_present: number;
   today_sick: number;

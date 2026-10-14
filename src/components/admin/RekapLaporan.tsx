@@ -68,10 +68,22 @@ export const RekapLaporan: React.FC<RekapLaporanProps> = ({ onViewReport }) => {
     loadRekap();
   }, [startDate, endDate, selectedClassId, selectedTeacherId, selectedMonth, statusFilter]);
 
-  const handleExportExcel = () => {
+  const handleExportExcel = async () => {
     if (!settings) return;
     const selectedClassName = classes.find((c) => c.id === selectedClassId)?.class_name;
-    exportRekapToExcel(reports, settings, {
+    // Ensure all reports have their student attendance data loaded for the Excel sheet
+    const fullReports = await Promise.all(
+      reports.map(async (r) => {
+        if (r.attendance && r.attendance.length > 0) return r;
+        try {
+          const detail = await api.getReportDetail(r.id);
+          return detail.report;
+        } catch {
+          return r;
+        }
+      })
+    );
+    exportRekapToExcel(fullReports, settings, {
       startDate: startDate || undefined,
       endDate: endDate || undefined,
       className: selectedClassName,
